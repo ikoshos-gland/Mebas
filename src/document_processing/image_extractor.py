@@ -40,8 +40,8 @@ class ImageExtractor:
     """
     
     # Cost control: minimum dimensions
-    MIN_WIDTH = 100   # pixels
-    MIN_HEIGHT = 100  # pixels
+    MIN_WIDTH = 50   # pixels
+    MIN_HEIGHT = 50  # pixels
     MAX_ASPECT_RATIO = 10  # Skip thin strips (decorative borders)
     
     def __init__(self, vision_client=None, output_dir: Optional[Path] = None):
@@ -144,14 +144,17 @@ class ImageExtractor:
                 bbox = region.polygon
                 
                 if not bbox:
+                    print(f"      ⚠️ Skipping figure on p{page_num}: No bounding box")
                     continue
                 
                 image_bytes, width, height = self._crop_image(doc, page_num, bbox)
                 
                 if image_bytes is None:
+                    print(f"      ⚠️ Skipping figure on p{page_num}: Crop failed")
                     continue
                 
                 if not self._passes_size_filter(width, height):
+                    print(f"      ⚠️ Skipping figure on p{page_num}: Size filter failed ({width}x{height})")
                     continue
                 
                 image_id = str(uuid.uuid4())[:8]
@@ -191,8 +194,11 @@ class ImageExtractor:
             page = doc[page_num - 1]
             
             # Convert polygon to rectangle
-            x_coords = [bbox[i] for i in range(0, len(bbox), 2)]
-            y_coords = [bbox[i] for i in range(1, len(bbox), 2)]
+            # Azure PDF model returns INCHES, PyMuPDF expects POINTS (1/72 inch)
+            POINTS_PER_INCH = 72
+            
+            x_coords = [bbox[i] * POINTS_PER_INCH for i in range(0, len(bbox), 2)]
+            y_coords = [bbox[i] * POINTS_PER_INCH for i in range(1, len(bbox), 2)]
             
             rect = fitz.Rect(
                 min(x_coords), min(y_coords),
@@ -274,6 +280,9 @@ class ImageExtractor:
                 
                 image.caption = response.choices[0].message.content
                 image.image_type = await self._classify_image_type(image_b64)
+                
+                print(f"      ✅ [Img {image.image_id}] p{image.page_number} ({image.width}x{image.height}) -> type: {image.image_type}")
+                print(f"         Caption: {image.caption[:100].replace(chr(10), ' ')}...")
                 
             except Exception as e:
                 print(f"Caption generation error for {image.image_id}: {e}")

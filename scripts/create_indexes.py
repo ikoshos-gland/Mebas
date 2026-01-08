@@ -47,8 +47,8 @@ def main():
             "description": "Sentetik Sorular (Hybrid Search)"
         },
         {
-            "name": settings.azure_search_index_chunks,
-            "schema": create_textbook_chunk_index_schema(settings.azure_search_index_chunks),
+            "name": settings.azure_search_index_kitap,
+            "schema": create_textbook_chunk_index_schema(settings.azure_search_index_kitap),
             "description": "Ders Kitabı Chunk'ları"
         },
         {

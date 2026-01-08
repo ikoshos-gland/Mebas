@@ -38,23 +38,46 @@ from src.vector_store.question_generator import SyntheticQuestionGenerator
 def parse_filename(filename: str) -> dict:
     """
     Parse filename to extract metadata.
-    Expected format: subject_grade.pdf (e.g., mat_9.pdf, fiz_10.pdf)
+    Expected formats:
+    - subject_grade.pdf (e.g., biyoloji_9.pdf)
+    - subject_grade.semester.pdf (e.g., biyoloji_9.1.pdf, biyoloji_10.2.pdf)
     """
-    stem = Path(filename).stem
-    parts = stem.split('_')
+    stem = Path(filename).stem  # e.g., "biyoloji_9.1" or "biyoloji_9"
+    
+    # Generate numeric textbook_id from hash (schema requires Int32)
+    textbook_id_hash = abs(hash(stem)) % (10**8)  # 8-digit positive integer
     
     metadata = {
         "subject": "genel",
         "grade": 0,
-        "textbook_id": stem
+        "semester": 0,  # 0 = unknown, 1 = 1. dönem, 2 = 2. dönem
+        "textbook_id": textbook_id_hash,
+        "textbook_name": stem  # Keep original name for reference
     }
     
+    # Split by underscore to get subject and grade parts
+    parts = stem.split('_')
+    
     if len(parts) >= 2:
-        metadata["subject"] = parts[0]
-        try:
-            metadata["grade"] = int(parts[1])
-        except ValueError:
-            pass
+        metadata["subject"] = parts[0]  # e.g., "biyoloji"
+        
+        # The grade part might be "9" or "9.1" (grade.semester)
+        grade_part = parts[1]  # e.g., "9" or "9.1"
+        
+        if '.' in grade_part:
+            # Format: subject_grade.semester.pdf (e.g., biyoloji_9.1.pdf)
+            grade_semester = grade_part.split('.')
+            try:
+                metadata["grade"] = int(grade_semester[0])
+                metadata["semester"] = int(grade_semester[1])
+            except (ValueError, IndexError):
+                pass
+        else:
+            # Format: subject_grade.pdf (e.g., biyoloji_9.pdf)
+            try:
+                metadata["grade"] = int(grade_part)
+            except ValueError:
+                pass
             
     return metadata
 
@@ -66,6 +89,11 @@ async def process_kazanim_pdf(
     pipeline
 ):
     print(f"\n📑 Processing Kazanim File: {pdf_path.name}")
+    
+    # Extract semester from filename
+    file_metadata = parse_filename(pdf_path.name)
+    semester = file_metadata.get("semester", 0)
+    print(f"   └─ Semester: {semester if semester > 0 else 'Unknown'}")
     
     # 1. Read PDF
     with open(pdf_path, "rb") as f:
@@ -84,12 +112,16 @@ async def process_kazanim_pdf(
     print(f"   └─ Extracted Text Snippet: {full_text[:500]!r}")
     
     # 3. Parse Kazanim Codes with Regex
-    # Pattern looks for M.9.1.2.3 or F.11.2.1.1 (old) and BİY.11.2.1 (new/maarif) styles
-    # [Letter].[Grade].[Unit].[Topic].[Objective] (optional)
-    # Updated to be space-tolerant and aggressive on lookahead to prevent swallowing next items
+    # Format: BİY.9.1.1. Title text
+    #         a) sub-item
+    #         b) sub-item
+    #         BİY.9.1.2. Next kazanim...
     print("   └─ Parsing kazanim codes...")
-    kazanim_pattern = r"([A-Zİ]+\s*\.\s*\d+(?:\.\d+){2,})\.?\s+(.+?)(?=\s+[A-Zİ]+\s*\.\s*\d+(?:\.\d+){2,}|$)"
-    matches = re.findall(kazanim_pattern, full_text, re.DOTALL)
+    
+    # Pattern: Capture code and everything until next code or end
+    # Lookahead ensures we stop before the next kazanim code
+    kazanim_pattern = r"([A-ZİĞÜŞÖÇ]+\.\d+(?:\.\d+)+)\.?\s+([\s\S]+?)(?=\n[A-ZİĞÜŞÖÇ]+\.\d+(?:\.\d+)+\.|$)"
+    matches = re.findall(kazanim_pattern, full_text)
     
     print(f"   └─ Found {len(matches)} potential kazanim entries")
     
@@ -97,36 +129,44 @@ async def process_kazanim_pdf(
         print("   ⚠️ No kazanim codes found! check regex or pdf format.")
         return
 
-    # 4. Generate Questions for each Kazanim
-    print("   └─ Generating synthetic questions (GPT-4o)...")
+    # 4. Generate Questions for each Kazanim (PARALLEL)
+    print(f"   └─ Generating synthetic questions (GPT-4o) - {len(matches)} kazanim in parallel...")
     generator = SyntheticQuestionGenerator()
     
-    all_questions = []
-    
-    # Process a subset for testing or all? Let's process all.
+    # Build kazanim dicts first
+    kazanim_dicts = []
     for code, description in matches:
         description = description.strip().replace("\n", " ")
-        print(f"      └─ Generating for {code}...")
-        
-        # Build minimal kazanim dict
-        # Try to extract grade/subject from code or filename
-        # Code format: M.9.1.2.3 -> M=Mat, 9=Grade
         parts = code.split('.')
         grade = 0
         if len(parts) > 1 and parts[1].isdigit():
             grade = int(parts[1])
             
-        kazanim_dict = {
+        kazanim_dicts.append({
             "id": str(uuid.uuid4()),
             "code": code,
             "description": description,
             "grade": grade,
-            "subject": parts[0] # 'M', 'F', etc.
-        }
-        
-        # Determine number of questions (maybe less for fast processing?)
-        # Default is 20, let's use 5 for this run to be faster
-        qs = await generator.generate_for_kazanim_async(kazanim_dict, count=5)
+            "subject": parts[0],  # 'BİY', 'M', etc.
+            "semester": semester
+        })
+    
+    # Parallel generation with semaphore to respect rate limits
+    PARALLEL_LIMIT = 5  # Process 5 at a time to avoid rate limits
+    semaphore = asyncio.Semaphore(PARALLEL_LIMIT)
+    
+    async def generate_with_limit(kazanim):
+        async with semaphore:
+            print(f"      └─ Generating for {kazanim['code']}...")
+            return await generator.generate_for_kazanim_async(kazanim, count=5)
+    
+    # Run all in parallel
+    tasks = [generate_with_limit(k) for k in kazanim_dicts]
+    results = await asyncio.gather(*tasks)
+    
+    # Flatten results
+    all_questions = []
+    for qs in results:
         all_questions.extend(qs)
 
     print(f"   └─ Generated {len(all_questions)} total questions")
@@ -134,23 +174,30 @@ async def process_kazanim_pdf(
     # 5. Index Questions
     if all_questions:
         print("   └─ Indexing questions to Azure AI Search...")
+        
+        # Build lookup for kazanim metadata
+        kazanim_lookup = {k["code"]: k for k in kazanim_dicts}
+        
         # Convert dataclass to dict for indexing
         q_dicts = []
         for q in all_questions:
+            # Get the kazanim metadata for this question
+            kaz = kazanim_lookup.get(q.parent_kazanim_code, {})
             q_dicts.append({
                 "id": str(uuid.uuid4()),
                 "question_text": q.question_text,
                 "difficulty": q.difficulty,
                 "question_type": q.question_type,
-                "kazanim_code": q.parent_kazanim_code,
-                "kazanim_description": description, # approximation
-                "grade": grade,
-                "subject": parts[0]
+                "code": q.parent_kazanim_code,  # pipeline expects 'code'
+                "description": kaz.get("description", ""),  # pipeline expects 'description'
+                "grade": kaz.get("grade", 0),
+                "subject": kaz.get("subject", ""),
+                "semester": kaz.get("semester", 0)
             })
             
         pipeline.index_kazanimlar(q_dicts, generate_questions=False) # Skip internal generation, we already did it
 
-    print(f"✅ Completed Kazanim File: {pdf_path.name}")
+    print(f"[OK] Completed Kazanim File: {pdf_path.name}")
 
 
 async def process_single_pdf(
@@ -180,10 +227,15 @@ async def process_single_pdf(
     result = await analyzer.analyze_document(doc_client, pdf_bytes)
     elements = analyzer.classify_elements(result)
     print(f"   └─ Found {len(elements)} layout elements")
+    if result.figures:
+        print(f"   └─ Azure found {len(result.figures)} figures in total")
+    else:
+        print(f"   └─ Azure found 0 figures")
 
     # 3. Image Extraction
     print("   └─ Extracting images...")
-    img_output_dir = Path("data/processed/images") / metadata["textbook_id"]
+    # Convert textbook_id to string for path composition
+    img_output_dir = Path("data/processed/images") / str(metadata["textbook_id"])
     extractor = ImageExtractor(vision_client=vision_client, output_dir=img_output_dir)
     
     # Extract images using Azure coordinates
@@ -195,6 +247,13 @@ async def process_single_pdf(
     if images and vision_client:
         print("   └─ Generating image captions (GPT-4o Vision)...")
         images = await extractor.generate_captions(images)
+        
+        # Log summary of types
+        type_counts = {}
+        for img in images:
+            t = img.image_type or "unknown"
+            type_counts[t] = type_counts.get(t, 0) + 1
+        print(f"   └─ Image Analysis Summary: {len(images)} images -> {type_counts}")
 
     # 4. Semantic Chunking
     print("   └─ Creating semantic chunks...")
@@ -251,12 +310,19 @@ async def process_single_pdf(
     if image_dicts:
         pipeline.index_images(image_dicts)
         
-    print(f"✅ Completed Textbook: {pdf_path.name}")
+    print(f"[OK] Completed Textbook: {pdf_path.name}")
 
 
-async def main():
+async def main(process_mode: str = "all"):
+    """
+    Main processing function.
+    
+    Args:
+        process_mode: "all", "kazanim", or "kitap"
+    """
     print("="*60)
     print("MEB RAG - PDF Ingestion Pipeline")
+    print(f"Mode: {process_mode.upper()}")
     print("="*60)
     
     settings = get_settings()
@@ -264,16 +330,16 @@ async def main():
     # Validate Directories
     pdf_dir = Path("data/pdfs")
     if not pdf_dir.exists():
-        print(f"❌ Directory not found: {pdf_dir}")
+        print(f"[ERROR] Directory not found: {pdf_dir}")
         return
 
     # Check Azure Keys
     if not settings.documentintelligence_api_key or not settings.azure_search_api_key:
-        print("❌ Missing Azure API Keys in .env")
+        print("[ERROR] Missing Azure API Keys in .env")
         return
 
     # Initialize Clients
-    print("🔌 Initializing Azure Clients...")
+    print("[INFO] Initializing Azure Clients...")
     
     # Document Intelligence Client
     doc_client = DocumentIntelligenceClient(
@@ -294,13 +360,20 @@ async def main():
     # Ensure indexes exist
     pipeline.create_all_indexes()
     
-    # Find PDFs
-    pdf_files = list(pdf_dir.rglob("*.pdf"))
+    # Find PDFs based on mode
+    if process_mode == "kazanim":
+        pdf_files = list(Path("data/pdfs/kazanimlar").rglob("*.pdf"))
+        print(f"📑 Sadece kazanımlar işlenecek: {len(pdf_files)} dosya")
+    elif process_mode == "kitap":
+        pdf_files = list(Path("data/pdfs/ders_kitaplari").rglob("*.pdf"))
+        print(f"📘 Sadece ders kitapları işlenecek: {len(pdf_files)} dosya")
+    else:
+        pdf_files = list(pdf_dir.rglob("*.pdf"))
+        print(f"📚 Tüm PDF'ler işlenecek: {len(pdf_files)} dosya")
+    
     if not pdf_files:
-        print("⚠️  No PDF files found in data/pdfs and its subdirectories")
+        print("⚠️  No PDF files found!")
         return
-        
-    print(f"Found {len(pdf_files)} PDF files.")
     
     # Process each PDF
     for pdf_file in pdf_files:
@@ -313,13 +386,49 @@ async def main():
                 pipeline
             )
         except Exception as e:
-            print(f"❌ Error processing {pdf_file.name}: {e}")
+            print(f"[ERROR] Error processing {pdf_file.name}: {e}")
             import traceback
             traceback.print_exc()
 
-    print("\n🎉 All processing completed!")
+    print("\n[DONE] All processing completed!")
 
 if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="MEB RAG - PDF Processing and Indexing",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Örnekler:
+  python scripts/process_pdfs.py              # Tüm PDF'leri işle
+  python scripts/process_pdfs.py --kazanim    # Sadece kazanımları işle
+  python scripts/process_pdfs.py --kitap      # Sadece ders kitaplarını işle
+        """
+    )
+    
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--kazanim", "-k",
+        action="store_true",
+        help="Sadece kazanım PDF'lerini işle (data/pdfs/kazanimlar/)"
+    )
+    group.add_argument(
+        "--kitap", "-t",
+        action="store_true", 
+        help="Sadece ders kitaplarını işle (data/pdfs/ders_kitaplari/)"
+    )
+    
+    args = parser.parse_args()
+    
+    # Determine mode
+    if args.kazanim:
+        mode = "kazanim"
+    elif args.kitap:
+        mode = "kitap"
+    else:
+        mode = "all"
+    
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    asyncio.run(main())
+    asyncio.run(main(mode))
+

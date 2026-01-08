@@ -84,6 +84,13 @@ def create_question_index_schema(index_name: str = "meb-sentetik-sorular-index")
                 filterable=True,
                 facetable=True
             ),
+            # Semester - 1 or 2 (dönem)
+            SearchField(
+                name="semester",
+                type=SearchFieldDataType.Int32,
+                filterable=True,
+                facetable=True
+            ),
             # Vector embedding for semantic search
             SearchField(
                 name="embedding",

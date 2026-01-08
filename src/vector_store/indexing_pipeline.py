@@ -8,6 +8,7 @@ from azure.core.credentials import AzureKeyCredential
 from typing import List, Optional
 import asyncio
 import time
+import uuid
 
 from config.settings import get_settings
 from src.vector_store.embeddings import embed_text, embed_batch, embed_batch_async
@@ -92,7 +93,8 @@ class IndexingPipeline:
         total_indexed = 0
         
         for i, kazanim in enumerate(kazanimlar):
-            print(f"Processing kazanım {i+1}/{len(kazanimlar)}: {kazanim.get('code')}")
+            code = kazanim.get('code') or kazanim.get('kazanim_code', 'Unknown')
+            print(f"Processing kazanım {i+1}/{len(kazanimlar)}: {code}")
             
             if generate_questions:
                 # Generate synthetic questions
@@ -101,14 +103,25 @@ class IndexingPipeline:
                     count=questions_per_kazanim
                 )
             else:
-                # Just index the kazanım itself as a "question"
-                questions = [SyntheticQuestion(
-                    question_text=kazanim.get("description", ""),
-                    difficulty="orta",
-                    question_type="kavram",
-                    parent_kazanim_id=str(kazanim.get("id", "")),
-                    parent_kazanim_code=kazanim.get("code", "")
-                )]
+                # Use pre-generated question from the input dict
+                # Check if question_text is provided (pre-generated question)
+                if kazanim.get("question_text"):
+                    questions = [SyntheticQuestion(
+                        question_text=kazanim.get("question_text", ""),
+                        difficulty=kazanim.get("difficulty", "orta"),
+                        question_type=kazanim.get("question_type", "kavram"),
+                        parent_kazanim_id=str(kazanim.get("id", "")),
+                        parent_kazanim_code=kazanim.get("code", "")
+                    )]
+                else:
+                    # Fallback: index kazanım description as a question
+                    questions = [SyntheticQuestion(
+                        question_text=kazanim.get("description", ""),
+                        difficulty="orta",
+                        question_type="kavram",
+                        parent_kazanim_id=str(kazanim.get("id", "")),
+                        parent_kazanim_code=kazanim.get("code", "")
+                    )]
             
             if not questions:
                 print(f"  ⚠️ No questions generated for {kazanim.get('code')}")
@@ -121,7 +134,11 @@ class IndexingPipeline:
             # Prepare documents for indexing
             documents = []
             for j, (q, emb) in enumerate(zip(questions, embeddings)):
-                doc_id = f"{kazanim.get('code', 'K')}-{j:03d}"
+                # Sanitize ID: Azure Search only allows letters, digits, _, -, =
+                raw_code = kazanim.get('code', 'K') or 'K'
+                safe_code = raw_code.replace('.', '_').replace('İ', 'I').replace('Ş', 'S').replace('Ğ', 'G').replace('Ü', 'U').replace('Ö', 'O').replace('Ç', 'C')
+                # Add UUID prefix to ensure uniqueness across different PDFs
+                doc_id = f"{safe_code}-{uuid.uuid4().hex[:8]}-{j:03d}"
                 documents.append({
                     "id": doc_id,
                     "question_text": q.question_text,
@@ -132,11 +149,18 @@ class IndexingPipeline:
                     "parent_kazanim_desc": kazanim.get("description", ""),
                     "grade": kazanim.get("grade", 0),
                     "subject": kazanim.get("subject", ""),
+                    "semester": kazanim.get("semester", 0),
                     "embedding": emb
                 })
             
             # Upload batch
             try:
+                # DEBUG: Show document details
+                if documents:
+                    print(f"  DEBUG: Doc ID: {documents[0]['id']}")
+                    print(f"  DEBUG: Semester: {documents[0].get('semester', 'N/A')}, Grade: {documents[0].get('grade', 'N/A')}")
+                    print(f"  DEBUG: Question preview: {documents[0]['question_text'][:80]}...")
+                
                 result = client.upload_documents(documents)
                 success = sum(1 for r in result if r.succeeded)
                 total_indexed += success
@@ -183,9 +207,14 @@ class IndexingPipeline:
             question_texts = [q.question_text for q in questions]
             embeddings = await embed_batch_async(question_texts)
             
+            
             documents = []
             for j, (q, emb) in enumerate(zip(questions, embeddings)):
-                doc_id = f"{kazanim.get('code', 'K')}-{j:03d}"
+                # Sanitize ID: Azure Search only allows letters, digits, _, -, =
+                raw_code = kazanim.get('code', 'K') or 'K'
+                safe_code = raw_code.replace('.', '_').replace('İ', 'I').replace('Ş', 'S').replace('Ğ', 'G').replace('Ü', 'U').replace('Ö', 'O').replace('Ç', 'C')
+                # Add UUID prefix to ensure uniqueness across different PDFs
+                doc_id = f"{safe_code}-{uuid.uuid4().hex[:8]}-{j:03d}"
                 documents.append({
                     "id": doc_id,
                     "question_text": q.question_text,
@@ -196,6 +225,7 @@ class IndexingPipeline:
                     "parent_kazanim_desc": kazanim.get("description", ""),
                     "grade": kazanim.get("grade", 0),
                     "subject": kazanim.get("subject", ""),
+                    "semester": kazanim.get("semester", 0),
                     "embedding": emb
                 })
             

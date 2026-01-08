@@ -148,7 +148,10 @@ JSON formatında döndür (başka açıklama yazma):
     ) -> List[SyntheticQuestion]:
         """
         Generate synthetic questions for a kazanım (async version).
+        Includes exponential backoff for rate limit handling.
         """
+        import asyncio
+        
         settings = get_settings()
         async_client = AsyncAzureOpenAI(
             azure_endpoint=settings.azure_openai_endpoint,
@@ -168,7 +171,7 @@ JSON formatında döndür (başka açıklama yazma):
             context = "\n".join(textbook_sections[:2])
             prompt += f"\n\nDERS KİTABI BAĞLAMI:\n{context}"
         
-        max_retries = 3
+        max_retries = 5  # Increased for rate limits
         for attempt in range(max_retries):
             try:
                 response = await async_client.chat.completions.create(
@@ -204,7 +207,15 @@ JSON formatında döndür (başka açıklama yazma):
                 if attempt == max_retries - 1:
                     return []
             except Exception as e:
+                error_str = str(e)
+                # Rate limit handling with exponential backoff
+                if "429" in error_str or "rate" in error_str.lower():
+                    wait_time = 2 ** attempt  # 1, 2, 4, 8, 16 seconds
+                    print(f"⚠️ Rate limit! {wait_time}s bekleniyor... (deneme {attempt + 1}/{max_retries})")
+                    await asyncio.sleep(wait_time)
+                    continue
                 print(f"Async soru üretim hatası: {e}")
                 return []
         
         return []
+
