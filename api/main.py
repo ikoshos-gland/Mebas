@@ -14,8 +14,13 @@ import time
 from api.models import HealthResponse, ErrorResponse
 from api.routes.analysis import router as analysis_router
 from api.routes.feedback import router as feedback_router
+from api.routes.content import router as content_router
 from config.settings import get_settings
+from config.logging import configure_logging
+import logging
 
+# Initialize logger
+logger = logging.getLogger("api.main")
 
 # Rate limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -25,7 +30,8 @@ limiter = Limiter(key_func=get_remote_address)
 async def lifespan(app: FastAPI):
     """Application lifespan - startup and shutdown"""
     # Startup
-    print("🚀 MEB RAG API başlatılıyor...")
+    configure_logging()
+    logger.info("🚀 MEB RAG API başlatılıyor...", extra={"extra_data": {"event": "startup"}})
     
     settings = get_settings()
     
@@ -33,22 +39,22 @@ async def lifespan(app: FastAPI):
     try:
         from src.database.db import init_db
         init_db()
-        print("✅ Veritabanı hazır")
+        logger.info("✅ Veritabanı hazır")
     except Exception as e:
-        print(f"⚠️ Veritabanı hatası: {e}")
+        logger.error(f"⚠️ Veritabanı hatası: {e}", exc_info=True)
     
     # Initialize graph
     try:
         from api.routes.analysis import get_graph
         get_graph()
-        print("✅ RAG Graph hazır")
+        logger.info("✅ RAG Graph hazır")
     except Exception as e:
-        print(f"⚠️ Graph hatası: {e}")
+        logger.error(f"⚠️ Graph hatası: {e}", exc_info=True)
     
     yield
     
     # Shutdown
-    print("👋 MEB RAG API kapatılıyor...")
+    logger.info("👋 MEB RAG API kapatılıyor...")
 
 
 # Create app
@@ -77,10 +83,10 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Add CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure for production!
+    allow_origins=["*"],  # Allows all origins
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
 )
 
 
@@ -88,12 +94,45 @@ app.add_middleware(
 
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
-    """Add X-Process-Time header to all responses"""
+    """Add X-Process-Time header and LOGGING"""
     start_time = time.time()
-    response = await call_next(request)
-    process_time = time.time() - start_time
-    response.headers["X-Process-Time"] = str(process_time)
-    return response
+    
+    # Log Request
+    logger.info(f"Incoming Request: {request.method} {request.url.path}")
+    
+    try:
+        response = await call_next(request)
+        process_time = time.time() - start_time
+        response.headers["X-Process-Time"] = str(process_time)
+        
+        # Log Response
+        logger.info(
+            f"Request Completed",
+            extra={
+                "extra_data": {
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status_code": response.status_code,
+                    "duration_seconds": round(process_time, 4)
+                }
+            }
+        )
+        return response
+    except Exception as e:
+        process_time = time.time() - start_time
+        logger.error(
+            f"Request Failed",
+            exc_info=True,
+            extra={
+                "extra_data": {
+                    "method": request.method,
+                    "path": request.url.path,
+                    "duration_seconds": round(process_time, 4),
+                    "error": str(e)
+                }
+            }
+        )
+        raise e
 
 
 # ================== ERROR HANDLERS ==================
@@ -102,6 +141,8 @@ async def add_process_time_header(request: Request, call_next):
 async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler"""
     settings = get_settings()
+    
+    logger.error("Global Exception Handler caught error", exc_info=True)
     
     error_detail = str(exc) if settings.debug else "Bir hata oluştu"
     
@@ -120,6 +161,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 # Include routers
 app.include_router(analysis_router)
 app.include_router(feedback_router)
+app.include_router(content_router)
 
 
 @app.get("/", tags=["Root"])

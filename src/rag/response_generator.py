@@ -71,6 +71,7 @@ Bu soruyu analiz et ve yapılandırılmış çıktı üret:
         question_text: str,
         matched_kazanimlar: List[Dict[str, Any]],
         related_chunks: List[Dict[str, Any]] = None,
+        related_images: List[Dict[str, Any]] = None,
         detected_topics: List[str] = None,
         prerequisite_gaps: List[Dict[str, Any]] = None
     ) -> AnalysisOutput:
@@ -81,12 +82,15 @@ Bu soruyu analiz et ve yapılandırılmış çıktı üret:
             question_text: The student's question
             matched_kazanimlar: Retrieved kazanımlar from Phase 4
             related_chunks: Related textbook chunks
+            related_images: Related textbook images
             detected_topics: Topics detected in the question
             prerequisite_gaps: Pre-computed prerequisite gaps
             
         Returns:
             AnalysisOutput with structured response
         """
+        from src.rag.output_models import ImageReference
+        
         # Build prompt
         prompt = self._build_prompt(
             question_text=question_text,
@@ -106,6 +110,17 @@ Bu soruyu analiz et ve yapılandırılmış çıktı üret:
             if prerequisite_gaps:
                 result.prerequisite_gaps.extend([
                     PrerequisiteGap(**gap) for gap in prerequisite_gaps
+                ])
+                
+            # Add retrieved images
+            if related_images:
+                result.image_references.extend([
+                    ImageReference(
+                        image_id=img.get("image_id") or img.get("id"),
+                        caption=img.get("caption", ""),
+                        page_number=img.get("page_number", 0),
+                        why_relevant="Görsel konuyla ilgili"  # Default reason
+                    ) for img in related_images
                 ])
             
             return result

@@ -40,8 +40,8 @@ class ImageExtractor:
     """
     
     # Cost control: minimum dimensions
-    MIN_WIDTH = 50   # pixels
-    MIN_HEIGHT = 50  # pixels
+    MIN_WIDTH = 200   # pixels
+    MIN_HEIGHT = 200  # pixels
     MAX_ASPECT_RATIO = 10  # Skip thin strips (decorative borders)
     
     def __init__(self, vision_client=None, output_dir: Optional[Path] = None):

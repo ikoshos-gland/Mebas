@@ -99,7 +99,7 @@ async def retrieve_kazanimlar(state: QuestionAnalysisState) -> Dict[str, Any]:
             grade=grade,
             subject=subject,
             is_exam_mode=state.get("is_exam_mode", False),
-            top_k=5
+            top_k=10
         )
         
         if not results:
@@ -124,9 +124,14 @@ async def retrieve_kazanimlar(state: QuestionAnalysisState) -> Dict[str, Any]:
 @with_timeout(30.0)
 async def retrieve_textbook(state: QuestionAnalysisState) -> Dict[str, Any]:
     """
-    Node: Retrieve related textbook chunks for matched kazanımlar.
+    Node: Retrieve related textbook chunks and IMAGES for matched kazanımlar.
     """
+    from config.settings import get_settings
+    from config.azure_config import get_search_client
+    from src.vector_store import ParentDocumentRetriever, ImageRetriever
+
     matched = state.get("matched_kazanimlar", [])
+    question_text = state.get("question_text", "")
     
     if not matched:
         return {
@@ -134,15 +139,47 @@ async def retrieve_textbook(state: QuestionAnalysisState) -> Dict[str, Any]:
             "related_images": []
         }
     
-    # Get kazanim codes
-    kazanim_codes = [k.get("kazanim_code") for k in matched]
-    
-    # TODO: Implement textbook chunk retrieval
-    # For now, return empty
-    return {
-        "related_chunks": [],
-        "related_images": []
-    }
+    try:
+        settings = get_settings()
+        
+        # 1. Retrieve Textbook Chunks
+        search_client = get_search_client(settings.azure_search_index_questions)
+        retriever = ParentDocumentRetriever(search_client)
+        
+        kazanim_codes = [k.get("kazanim_code") for k in matched]
+        
+        related_chunks = await retriever.search_textbook_by_kazanimlar(
+            kazanim_codes=kazanim_codes,
+            question_text=question_text,
+            top_k=3
+        )
+        
+        # 2. Retrieve Related Images
+        # We search for images using the question text which describes the topic
+        image_client = get_search_client(settings.azure_search_index_images)
+        image_retriever = ImageRetriever(image_client)
+        
+        # Also try to use topics if available
+        search_query = question_text
+        if state.get("detected_topics"):
+            search_query += " " + " ".join(state.get("detected_topics"))
+            
+        related_images = await image_retriever.search_by_description_async(
+            description=search_query,
+            top_k=3
+        )
+        
+        return {
+            "related_chunks": related_chunks,
+            "related_images": related_images
+        }
+        
+    except Exception as e:
+        print(f"Textbook retrieval error: {e}")
+        return {
+            "related_chunks": [],
+            "related_images": []
+        }
 
 
 @log_node_execution("rerank_results")
@@ -161,7 +198,7 @@ async def rerank_results(state: QuestionAnalysisState) -> Dict[str, Any]:
     # For now, just return as-is
     # TODO: Implement LLM-based reranking if needed
     return {
-        "matched_kazanimlar": matched[:3]  # Keep top 3
+        "matched_kazanimlar": matched[:5]  # Keep top 5
     }
 
 
@@ -170,9 +207,9 @@ async def rerank_results(state: QuestionAnalysisState) -> Dict[str, Any]:
 async def generate_response(state: QuestionAnalysisState) -> Dict[str, Any]:
     """
     Node: Generate final response using RAG.
-    
-    This will be implemented in Phase 7 with structured output.
     """
+    from src.rag.response_generator import ResponseGenerator
+    
     matched = state.get("matched_kazanimlar", [])
     
     if not matched:
@@ -185,16 +222,33 @@ async def generate_response(state: QuestionAnalysisState) -> Dict[str, Any]:
             "status": "success"
         }
     
-    # Basic response (Phase 7 will add structured LLM output)
-    return {
-        "response": {
-            "message": f"{len(matched)} kazanım bulundu.",
-            "kazanimlar": matched,
-            "question_text": state.get("question_text", ""),
-            "grade": get_effective_grade(state)
-        },
-        "status": "success"
-    }
+    try:
+        generator = ResponseGenerator()
+        
+        analysis_result = await generator.generate(
+            question_text=state.get("question_text", ""),
+            matched_kazanimlar=matched,
+            related_chunks=state.get("related_chunks", []),
+            related_images=state.get("related_images", []),
+            detected_topics=state.get("detected_topics", [])
+        )
+        
+        return {
+            "response": analysis_result.model_dump(),
+            "status": "success"
+        }
+        
+    except Exception as e:
+        print(f"Response generation error: {e}")
+        # Fallback
+        return {
+            "response": {
+                "message": f"{len(matched)} kazanım bulundu fakat analiz üretilemedi.",
+                "kazanimlar": matched,
+                "error": str(e)
+            },
+            "status": "partial_success"
+        }
 
 
 @log_node_execution("handle_error")

@@ -72,7 +72,8 @@ class LayoutAnalyzer:
             AnalyzeDocumentRequest(bytes_source=pdf_bytes),
             output_content_format="markdown"  # CRITICAL for math formulas!
         )
-        return poller.result()
+        # Wait up to 30 minutes for large file processing
+        return poller.result(timeout=1800)
     
     def classify_elements(self, result: AnalyzeResult) -> List[LayoutElement]:
         """

@@ -104,7 +104,7 @@ class ParentDocumentRetriever:
             filter=filter_str,
             query_type="semantic",  # Enable semantic reranker
             semantic_configuration_name="semantic-config",
-            top=50,  # Get more for grouping
+            top=100,  # Get more for grouping
             select=[
                 "parent_kazanim_id",
                 "parent_kazanim_code",
@@ -187,7 +187,7 @@ class ParentDocumentRetriever:
             filter=filter_str,
             query_type="semantic",
             semantic_configuration_name="semantic-config",
-            top=50,
+            top=100,  # Get more for grouping
             select=[
                 "parent_kazanim_id",
                 "parent_kazanim_code",
@@ -246,9 +246,55 @@ class ParentDocumentRetriever:
         """
         Search textbook chunks related to given kazanımlar.
         
-        Called after initial kazanım retrieval to get relevant
-        textbook sections for the response.
+        Uses Hybrid Search (Vector + Text) on textbook index.
         """
-        # This would use a separate textbook chunks index
-        # For now, return empty - will be implemented with textbook index
-        return []
+        import asyncio
+        from config.settings import get_settings
+        from config.azure_config import get_search_client
+        
+        settings = get_settings()
+        client = get_search_client(settings.azure_search_index_kitap)
+        
+        # We can search using the question text + kazanim codes to find relevant sections
+        # Or preferably, we search using the kazanım descriptions if we had them here,
+        # but we only have codes passed in.
+        # However, the question_text itself is a good proxy for the topic.
+        
+        # 1. Embed the question/topic
+        query_embedding = await embed_text_async(question_text)
+        
+        # 2. Build a filter - if we had textbook-kazanim mapping we'd use it.
+        # For now, just search the content.
+        
+        results = await asyncio.to_thread(
+            client.search,
+            search_text=question_text,
+            vector_queries=[
+                VectorizedQuery(
+                    vector=query_embedding,
+                    k_nearest_neighbors=20,
+                    fields="embedding"
+                )
+            ],
+            top=top_k,
+            select=[
+                "id",
+                "content",
+                "hierarchy_path",
+                "page_range",
+                "subject",
+                "grade",
+                "chunk_type"
+            ]
+        )
+        
+        return [
+            {
+                "id": r.get("id"),
+                "content": r.get("content"),
+                "hierarchy_path": r.get("hierarchy_path"),
+                "page_range": r.get("page_range"),
+                "score": r.get("@search.score", 0)
+            }
+            for r in results
+        ]

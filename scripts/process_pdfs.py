@@ -344,7 +344,10 @@ async def main(process_mode: str = "all"):
     # Document Intelligence Client
     doc_client = DocumentIntelligenceClient(
         endpoint=settings.documentintelligence_endpoint,
-        credential=AzureKeyCredential(settings.documentintelligence_api_key)
+        credential=AzureKeyCredential(settings.documentintelligence_api_key),
+        # Increase timeout for large PDF uploads (180MB+)
+        connection_timeout=300,  # 5 minutes connect
+        read_timeout=300         # 5 minutes read
     )
     
     # Azure OpenAI Client (for Vision)
