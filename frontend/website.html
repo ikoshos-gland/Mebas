@@ -16,6 +16,8 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Marked for Markdown Parsing (must load before usage) -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
     <style>
         :root {
@@ -159,7 +161,7 @@
                     class="font-mono-custom text-xs uppercase tracking-wider text-neutral-600 group-hover:text-[#1C1917]">History</span>
             </button>
 
-            <button
+            <button id="new-chat-btn"
                 class="flex items-center gap-2 px-5 py-2 rounded-full bg-[#1C1917] text-[#FDFCF8] hover:bg-[#78350F] transition-all shadow-lg shadow-black/5 hover:shadow-xl hover:shadow-[#78350F]/10">
                 <i data-lucide="plus" class="w-3.5 h-3.5"></i>
                 <span class="font-mono-custom text-xs uppercase tracking-wider">New Chat</span>
@@ -325,7 +327,7 @@
                         class="w-full bg-transparent border-0 focus:ring-0 p-3 pb-3 font-sans text-base font-light text-[#1C1917] placeholder:text-neutral-400 resize-none max-h-32 leading-relaxed"
                         oninput="this.style.height = ''; this.style.height = this.scrollHeight + 'px'"></textarea>
 
-                    <button
+                    <button id="send-btn"
                         class="mb-1 p-2.5 bg-[#1C1917] text-[#FDFCF8] rounded-xl hover:bg-[#78350F] transition-all shadow-md active:scale-95">
                         <i data-lucide="arrow-up" class="w-5 h-5 stroke-[1.5]"></i>
                     </button>
@@ -588,7 +590,7 @@
         // ==========================================
         // STATE MANAGEMENT & CONFIG
         // ==========================================
-        const API_BASE_URL = 'http://localhost:8001/api/v1'; // Docker mapped port
+        const API_BASE_URL = 'http://localhost:8001'; // Docker mapped port
 
         const state = {
             thread_id: crypto.randomUUID(),
@@ -600,28 +602,21 @@
             is_loading: false
         };
 
-        // DOM Elements
+        // DOM Elements - use IDs instead of icon-based selectors (icons created after page load)
         const elements = {
             chatStream: document.getElementById('chat-stream'),
             chatContainer: document.querySelector('#chat-stream > div'),
             inputArea: document.querySelector('textarea'),
-            sendButton: document.querySelector('button i[data-lucide="arrow-up"]').parentElement,
+            sendButton: document.getElementById('send-btn'),
             fileInput: document.querySelector('input[type="file"]'),
             filePreviewBtn: document.querySelector('button[title="Upload Image"]'),
             gradeSelect: document.querySelector('select'),
             examToggle: document.querySelector('.custom-toggle'),
-            newChatBtn: document.querySelector('button i[data-lucide="plus"]').parentElement
+            newChatBtn: document.getElementById('new-chat-btn')
         };
 
-        // DEBUG: Verify elements
-        console.log('Send Button found:', elements.sendButton);
-        if (!elements.sendButton) alert('ERROR: Send button not found by JS!');
-
-        elements.sendButton.addEventListener('click', (e) => {
-            console.log('Button clicked!');
-            // alert('Button clicked!'); // Uncomment if console is hidden
-            handleSend();
-        });
+        // Attach send button click handler
+        elements.sendButton.addEventListener('click', handleSend);
 
         // ==========================================
         // EVENT LISTENERS
@@ -712,33 +707,78 @@
             const aiContentContainer = document.getElementById(aiMessageId).querySelector('.prose');
 
             try {
-                // 4. API Call (Streaming or Standard)
-                // Note: For simplicity in this vanilla JS demo, we'll use the standard endpoint 
-                // but simulate streaming effect, or implement true streaming if backend supports it via fetch.
+                // 4. API Call - Use streaming for text, standard for images
+                if (usedImage) {
+                    // Image analysis - standard request
+                    const response = await fetch(`${API_BASE_URL}/analyze/image`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            image_base64: payload.question_image_base64,
+                            grade: payload.grade,
+                            subject: payload.subject,
+                            is_exam_mode: payload.is_exam_mode
+                        })
+                    });
+                    if (!response.ok) throw new Error(`API Error: ${response.status}`);
+                    const data = await response.json();
+                    updateAIResponse(aiMessageId, data);
+                } else {
+                    // Text analysis - use streaming!
+                    const response = await fetch(`${API_BASE_URL}/analyze/text-stream`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            question_text: payload.question_text,
+                            grade: payload.grade,
+                            subject: payload.subject,
+                            is_exam_mode: payload.is_exam_mode
+                        })
+                    });
 
-                // Let's use the standard async endpoint first to ensure robust structured data
-                // const endpoint = usedImage ? '/analyze-image' : '/analyze-text'; 
-                // Actually the backend unifies them in /analyze-text usually or separates them.
-                // Let's assume /analyze-text handles both if base64 is passed, or we adjust.
+                    if (!response.ok) throw new Error(`API Error: ${response.status}`);
 
-                // Based on backend spec: POST /api/v1/analyze-text (supports image base64 in body)
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let ragData = null;
+                    let teacherContent = '';
 
-                const response = await fetch(`${API_BASE_URL}/analyze-text`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(payload)
-                });
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
 
-                if (!response.ok) {
-                    throw new Error(`API Error: ${response.status}`);
+                        const chunk = decoder.decode(value);
+                        const lines = chunk.split('\n');
+
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                try {
+                                    const event = JSON.parse(line.slice(6));
+
+                                    if (event.event === 'rag_complete') {
+                                        ragData = event.data;
+                                        // Show RAG results immediately
+                                        updateAIResponseStreaming(aiMessageId, ragData, '');
+                                    } else if (event.event === 'teacher_token') {
+                                        teacherContent += event.token;
+                                        // Update teacher section live
+                                        updateAIResponseStreaming(aiMessageId, ragData, teacherContent);
+                                    } else if (event.event === 'done') {
+                                        // Final update
+                                        if (ragData) {
+                                            ragData.teacher_explanation = teacherContent;
+                                            updateAIResponse(aiMessageId, ragData);
+                                        }
+                                    } else if (event.event === 'error') {
+                                        throw new Error(event.error);
+                                    }
+                                } catch (e) {
+                                    // Ignore JSON parse errors for incomplete chunks
+                                }
+                            }
+                        }
+                    }
                 }
-
-                const data = await response.json();
-
-                // 5. Update UI with Real Data
-                updateAIResponse(aiMessageId, data.output);
 
             } catch (error) {
                 console.error(error);
@@ -821,6 +861,128 @@
 
             modal.classList.remove('hidden');
         }
+        // Streaming version - updates UI incrementally as tokens arrive
+        function updateAIResponseStreaming(elementId, ragData, teacherContent) {
+            const container = document.getElementById(elementId);
+            if (!container) return;
+
+            // Change spinner to typing indicator
+            const iconContainer = container.querySelector('.w-8.h-8');
+            iconContainer.innerHTML = `<i data-lucide="sparkles" class="w-3.5 h-3.5 text-[#FDFCF8]"></i>`;
+
+            // Build Kazanım Cards (from RAG data)
+            let kazanimlarHtml = '';
+            if (ragData?.matched_kazanimlar?.length > 0) {
+                kazanimlarHtml = `
+                    <div class="mb-6">
+                        <h3 class="font-serif-custom text-base italic text-[#78350F] mb-3 flex items-center gap-2">
+                            <i data-lucide="target" class="w-4 h-4"></i>
+                            Eşleşen Kazanımlar
+                        </h3>
+                        <div class="space-y-3">
+                            ${ragData.matched_kazanimlar.slice(0, 5).map(k => `
+                                <div class="bg-[#F5F5F4]/60 rounded-lg p-4 border border-[#E7E5E4]">
+                                    <div class="flex items-start justify-between gap-3 mb-2">
+                                        <span class="font-mono-custom text-xs font-semibold text-[#78350F] bg-[#78350F]/10 px-2 py-1 rounded">${k.code || 'Kazanım'}</span>
+                                        <div class="flex items-center gap-2">
+                                            ${k.grade ? `<span class="font-mono-custom text-[10px] text-neutral-500 bg-white px-2 py-0.5 rounded border border-[#E7E5E4]">${k.grade}. Sınıf</span>` : ''}
+                                            <span class="font-mono-custom text-[10px] text-neutral-400">%${(k.score * 100).toFixed(0)}</span>
+                                        </div>
+                                    </div>
+                                    <p class="text-sm text-[#1C1917]/80 leading-relaxed line-clamp-2">${k.description || ''}</p>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Build Textbook References
+            let textbookHtml = '';
+            if (ragData?.textbook_references?.length > 0) {
+                textbookHtml = `
+                    <div class="mb-6">
+                        <h3 class="font-serif-custom text-base italic text-[#78350F] mb-3 flex items-center gap-2">
+                            <i data-lucide="book-open" class="w-4 h-4"></i>
+                            Ders Kitabı Referansları
+                        </h3>
+                        <div class="space-y-2">
+                            ${ragData.textbook_references.slice(0, 3).map(ref => `
+                                <div class="bg-white rounded-lg p-3 border border-[#E7E5E4]">
+                                    <div class="flex items-center justify-between">
+                                        <span class="font-mono-custom text-xs font-medium text-[#1C1917]">${ref.chapter || 'Bölüm'}</span>
+                                        ${ref.pages ? `<span class="font-mono-custom text-[10px] text-[#78350F] bg-[#78350F]/5 px-2 py-0.5 rounded">Sayfa ${ref.pages}</span>` : ''}
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Teacher explanation (streaming)
+            let teacherHtml = '';
+            if (teacherContent) {
+                teacherHtml = `
+                    <div class="mb-6 bg-gradient-to-br from-[#78350F]/5 to-[#9A3412]/5 rounded-xl p-5 border border-[#78350F]/20">
+                        <div class="flex items-center gap-3 mb-4">
+                            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-[#78350F] to-[#9A3412] flex items-center justify-center shadow-lg">
+                                <i data-lucide="graduation-cap" class="w-5 h-5 text-white"></i>
+                            </div>
+                            <div>
+                                <span class="font-serif-custom text-base font-medium text-[#78350F]">Öğretmen Açıklaması</span>
+                                <span class="text-xs text-neutral-400 ml-2 font-mono-custom">GPT-5.2 <span class="animate-pulse">●</span></span>
+                            </div>
+                        </div>
+                        <div class="prose prose-sm max-w-none font-sans leading-7 text-[#1C1917]/90">
+                            ${marked.parse(teacherContent)}
+                        </div>
+                    </div>
+                `;
+            } else {
+                teacherHtml = `
+                    <div class="mb-6 bg-gradient-to-br from-[#78350F]/5 to-[#9A3412]/5 rounded-xl p-5 border border-[#78350F]/20">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-[#78350F] to-[#9A3412] flex items-center justify-center shadow-lg animate-pulse">
+                                <i data-lucide="graduation-cap" class="w-5 h-5 text-white"></i>
+                            </div>
+                            <div>
+                                <span class="font-serif-custom text-base font-medium text-[#78350F]">Öğretmen Açıklaması</span>
+                                <span class="text-xs text-neutral-400 ml-2 font-mono-custom">Hazırlanıyor...</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            const confidenceValue = ragData?.confidence || 0;
+
+            const htmlContent = `
+                <div class="card-surface p-8 rounded-2xl rounded-tl-sm relative overflow-hidden">
+                     <div class="absolute top-0 left-0 w-full h-[3px] bg-gradient-to-r from-[#78350F]/40 via-[#9A3412]/30 to-transparent"></div>
+                     
+                     <div class="flex items-center justify-between mb-6 pb-4 border-b border-[#E7E5E4]">
+                        <span class="font-serif-custom text-lg italic text-[#78350F]">Analiz Sonucu</span>
+                         <div class="flex items-center gap-3">
+                            <span class="font-mono-custom text-[9px] text-neutral-400 bg-[#F5F5F4] px-2 py-1 rounded border border-[#E7E5E4]/50">GÜVEN: ${(confidenceValue * 100).toFixed(0)}%</span>
+                        </div>
+                    </div>
+
+                    <!-- Teacher Explanation (streaming) -->
+                    ${teacherHtml}
+
+                    <!-- Kazanımlar Section -->
+                    ${kazanimlarHtml}
+
+                    <!-- Textbook References Section -->
+                    ${textbookHtml}
+                </div>
+            `;
+
+            container.querySelector('.flex.flex-col').innerHTML = htmlContent;
+            lucide.createIcons();
+            scrollToBottom();
+        }
 
         function updateAIResponse(elementId, output) {
             const container = document.getElementById(elementId);
@@ -830,26 +992,80 @@
             const iconContainer = container.querySelector('.w-8.h-8');
             iconContainer.innerHTML = `<i data-lucide="sparkles" class="w-3.5 h-3.5 text-[#FDFCF8]"></i>`;
 
-            // Format references
-            let referencesHtml = '';
-            // Textbook refs
-            if (output.textbook_references && output.textbook_references.length > 0) {
-                referencesHtml += output.textbook_references.map(ref => `
-                    <button class="flex items-center gap-2 px-3 py-1.5 bg-[#78350F]/5 hover:bg-[#78350F]/10 border border-[#78350F]/20 rounded text-[#78350F] transition-colors shadow-sm">
-                        <i data-lucide="book-open" class="w-3.5 h-3.5"></i>
-                        <span class="font-mono-custom text-[10px] uppercase tracking-wide font-medium">Sayfa ${ref.page_range || 'Ref'}</span>
-                    </button>
-                    <div class="h-4 w-px bg-[#E7E5E4] mx-1"></div>
-                 `).join('');
+            // Build Kazanım Cards HTML
+            let kazanimlarHtml = '';
+            if (output.matched_kazanimlar && output.matched_kazanimlar.length > 0) {
+                kazanimlarHtml = `
+                    <div class="mb-6">
+                        <h3 class="font-serif-custom text-base italic text-[#78350F] mb-3 flex items-center gap-2">
+                            <i data-lucide="target" class="w-4 h-4"></i>
+                            Eşleşen Kazanımlar
+                        </h3>
+                        <div class="space-y-3">
+                            ${output.matched_kazanimlar.slice(0, 5).map(k => `
+                                <div class="bg-[#F5F5F4]/60 rounded-lg p-4 border border-[#E7E5E4] hover:border-[#78350F]/30 transition-colors">
+                                    <div class="flex items-start justify-between gap-3 mb-2">
+                                        <span class="font-mono-custom text-xs font-semibold text-[#78350F] bg-[#78350F]/10 px-2 py-1 rounded">${k.code || 'Kazanım'}</span>
+                                        <div class="flex items-center gap-2">
+                                            ${k.grade ? `<span class="font-mono-custom text-[10px] text-neutral-500 bg-white px-2 py-0.5 rounded border border-[#E7E5E4]">${k.grade}. Sınıf</span>` : ''}
+                                            <span class="font-mono-custom text-[10px] text-neutral-400">%${(k.score * 100).toFixed(0)}</span>
+                                        </div>
+                                    </div>
+                                    <p class="text-sm text-[#1C1917]/80 leading-relaxed">${k.description || ''}</p>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
             }
-            // Image refs
-            if (output.image_references && output.image_references.length > 0) {
-                referencesHtml += output.image_references.map(img => `
-                    <button onclick="showImage('${img.image_id}', '${img.caption.replace(/'/g, "\\'")}')" class="flex items-center gap-2 px-3 py-1.5 bg-[#1C1917]/5 hover:bg-[#1C1917]/10 border border-[#1C1917]/20 rounded text-[#1C1917] transition-colors shadow-sm cursor-zoom-in">
-                        <i data-lucide="image" class="w-3.5 h-3.5"></i>
-                        <span class="font-mono-custom text-[10px] uppercase tracking-wide font-medium">Şekil ${img.page_number}</span>
-                    </button>
-                 `).join('');
+
+            // Build Textbook References HTML
+            let textbookHtml = '';
+            if (output.textbook_references && output.textbook_references.length > 0) {
+                textbookHtml = `
+                    <div class="mb-6">
+                        <h3 class="font-serif-custom text-base italic text-[#78350F] mb-3 flex items-center gap-2">
+                            <i data-lucide="book-open" class="w-4 h-4"></i>
+                            Ders Kitabı Referansları
+                        </h3>
+                        <div class="space-y-3">
+                            ${output.textbook_references.slice(0, 3).map(ref => `
+                                <div class="bg-white rounded-lg p-4 border border-[#E7E5E4] shadow-sm">
+                                    <div class="flex items-center justify-between mb-2">
+                                        <span class="font-mono-custom text-xs font-medium text-[#1C1917]">${ref.chapter || 'Bölüm'}</span>
+                                        ${ref.pages ? `<span class="font-mono-custom text-[10px] text-[#78350F] bg-[#78350F]/5 px-2 py-0.5 rounded">Sayfa ${ref.pages}</span>` : ''}
+                                    </div>
+                                    ${ref.content ? `<p class="text-sm text-neutral-600 leading-relaxed line-clamp-3">${ref.content.substring(0, 300)}${ref.content.length > 300 ? '...' : ''}</p>` : ''}
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Summary text
+            const summaryText = output.summary || 'Analiz tamamlandı.';
+            const confidenceValue = output.confidence || 0;
+
+            // Teacher explanation (GPT-5.2 synthesized)
+            let teacherHtml = '';
+            if (output.teacher_explanation) {
+                teacherHtml = `
+                    <div class="mb-6 bg-gradient-to-br from-[#78350F]/5 to-[#9A3412]/5 rounded-xl p-5 border border-[#78350F]/20">
+                        <div class="flex items-center gap-3 mb-4">
+                            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-[#78350F] to-[#9A3412] flex items-center justify-center shadow-lg">
+                                <i data-lucide="graduation-cap" class="w-5 h-5 text-white"></i>
+                            </div>
+                            <div>
+                                <span class="font-serif-custom text-base font-medium text-[#78350F]">Öğretmen Açıklaması</span>
+                                <span class="text-xs text-neutral-400 ml-2 font-mono-custom">GPT-5.2</span>
+                            </div>
+                        </div>
+                        <div class="prose prose-sm max-w-none font-sans leading-7 text-[#1C1917]/90">
+                            ${marked.parse(output.teacher_explanation)}
+                        </div>
+                    </div>
+                `;
             }
 
             const htmlContent = `
@@ -857,23 +1073,43 @@
                      <div class="absolute top-0 left-0 w-full h-[3px] bg-gradient-to-r from-[#78350F]/40 via-[#9A3412]/30 to-transparent"></div>
                      
                      <div class="flex items-center justify-between mb-6 pb-4 border-b border-[#E7E5E4]">
-                        <span class="font-serif-custom text-lg italic text-[#78350F]">Analysis Output</span>
+                        <span class="font-serif-custom text-lg italic text-[#78350F]">Analiz Sonucu</span>
                          <div class="flex items-center gap-3">
-                            <span class="font-mono-custom text-[9px] text-neutral-400 bg-[#F5F5F4] px-2 py-1 rounded border border-[#E7E5E4]/50">CONFIDENCE: ${(output.confidence * 100).toFixed(0)}%</span>
+                            <span class="font-mono-custom text-[9px] text-neutral-400 bg-[#F5F5F4] px-2 py-1 rounded border border-[#E7E5E4]/50">GÜVEN: ${(confidenceValue * 100).toFixed(0)}%</span>
+                            <span class="font-mono-custom text-[9px] text-neutral-400 bg-[#F5F5F4] px-2 py-1 rounded border border-[#E7E5E4]/50">SÜRE: ${((output.processing_time_ms || 0) / 1000).toFixed(1)}s</span>
                         </div>
                     </div>
 
-                    <div class="prose prose-sm font-sans font-light leading-7 text-[#1C1917]/90 max-w-none">
-                        ${marked.parse(output.summary)} 
+                    <!-- Teacher Explanation (GPT-5.2) - Most Important! -->
+                    ${teacherHtml}
+
+                    <!-- Kazanımlar Section -->
+                    ${kazanimlarHtml}
+
+                    <!-- Textbook References Section -->
+                    ${textbookHtml}
+
+                    <!-- Summary Section -->
+                    <div class="bg-[#FDFCF8] rounded-lg p-4 border border-[#E7E5E4]">
+                        <h3 class="font-serif-custom text-base italic text-[#78350F] mb-2 flex items-center gap-2">
+                            <i data-lucide="message-square" class="w-4 h-4"></i>
+                            Özet
+                        </h3>
+                        <div class="prose prose-sm font-sans font-light leading-7 text-[#1C1917]/90 max-w-none">
+                            ${marked.parse(summaryText)} 
+                        </div>
                     </div>
 
                     <!-- Actions Footer -->
-                    <div class="flex flex-wrap items-center gap-3 mt-8 pt-5 border-t border-[#E7E5E4]/60 opacity-60 group-hover:opacity-100 transition-opacity duration-300">
-                        ${referencesHtml}
+                    <div class="flex flex-wrap items-center gap-3 mt-6 pt-4 border-t border-[#E7E5E4]/60 opacity-60 group-hover:opacity-100 transition-opacity duration-300">
+                        <span class="font-mono-custom text-[10px] text-neutral-400">${output.matched_kazanimlar?.length || 0} kazanım eşleşti</span>
                         <div class="flex-grow"></div>
                         <div class="flex items-center gap-1">
                              <button class="p-1.5 hover:bg-[#F5F5F4] rounded text-neutral-400 hover:text-[#1C1917] transition-colors">
                                 <i data-lucide="thumbs-up" class="w-3.5 h-3.5"></i>
+                            </button>
+                            <button class="p-1.5 hover:bg-[#F5F5F4] rounded text-neutral-400 hover:text-[#1C1917] transition-colors">
+                                <i data-lucide="thumbs-down" class="w-3.5 h-3.5"></i>
                             </button>
                         </div>
                     </div>
@@ -892,8 +1128,6 @@
         }
 
     </script>
-    <!-- Marked for Markdown Parsing -->
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </body>
 
 </html>

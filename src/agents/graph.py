@@ -147,10 +147,13 @@ class MebRagGraph:
             is_exam_mode=is_exam_mode
         )
         
-        # Config for checkpointing
+        # Config for checkpointing - always provide thread_id if checkpointer exists
         config = {}
-        if thread_id and self.checkpointer:
-            config = {"configurable": {"thread_id": thread_id}}
+        if self.checkpointer:
+            import uuid
+            # Use provided thread_id or generate a new one
+            effective_thread_id = thread_id if thread_id else str(uuid.uuid4())
+            config = {"configurable": {"thread_id": effective_thread_id}}
         
         # Run graph
         result = await self.graph.ainvoke(initial_state, config=config)
@@ -179,9 +182,12 @@ class MebRagGraph:
             is_exam_mode=is_exam_mode
         )
         
+        # Config for checkpointing - always provide thread_id if checkpointer exists
         config = {}
-        if thread_id and self.checkpointer:
-            config = {"configurable": {"thread_id": thread_id}}
+        if self.checkpointer:
+            import uuid
+            effective_thread_id = thread_id if thread_id else str(uuid.uuid4())
+            config = {"configurable": {"thread_id": effective_thread_id}}
         
         result = self.graph.invoke(initial_state, config=config)
         

@@ -68,6 +68,8 @@ class KazanimMatch(BaseModel):
     code: str
     description: str
     score: float
+    grade: Optional[int] = None
+    subject: Optional[str] = None
     reason: Optional[str] = None
 
 
@@ -81,9 +83,10 @@ class PrerequisiteGap(BaseModel):
 
 class TextbookRef(BaseModel):
     """A textbook reference"""
-    chapter: str
-    pages: str
-    relevance: str
+    chapter: Optional[str] = None
+    pages: Optional[str] = None
+    content: Optional[str] = None
+    relevance: Optional[str] = None
 
 
 class AnalysisResponse(BaseModel):
@@ -93,6 +96,7 @@ class AnalysisResponse(BaseModel):
     
     # Results
     summary: Optional[str] = Field(None, description="Summary message")
+    teacher_explanation: Optional[str] = Field(None, description="GPT-5.2 pedagogical explanation")
     matched_kazanimlar: List[KazanimMatch] = Field(default_factory=list)
     prerequisite_gaps: List[PrerequisiteGap] = Field(default_factory=list)
     textbook_references: List[TextbookRef] = Field(default_factory=list)

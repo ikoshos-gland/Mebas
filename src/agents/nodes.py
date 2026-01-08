@@ -103,9 +103,11 @@ async def retrieve_kazanimlar(state: QuestionAnalysisState) -> Dict[str, Any]:
         )
         
         if not results:
+            # CRITICAL: Increment retry count when returning needs_retry
             return {
                 "matched_kazanimlar": [],
-                "status": "needs_retry"
+                "status": "needs_retry",
+                "retrieval_retry_count": retry_count + 1
             }
         
         return {
@@ -114,9 +116,11 @@ async def retrieve_kazanimlar(state: QuestionAnalysisState) -> Dict[str, Any]:
         }
         
     except Exception as e:
+        # CRITICAL: Increment retry count on error too
         return {
             "error": f"Kazanım arama hatası: {str(e)}",
-            "status": "needs_retry"
+            "status": "needs_retry",
+            "retrieval_retry_count": retry_count + 1
         }
 
 

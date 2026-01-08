@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     azure_openai_api_key: str = ""
     azure_openai_api_version: str = "2024-12-01-preview"
     azure_openai_chat_deployment: str = "gpt-4o"
+    azure_openai_teacher_deployment: str = "gpt-5.2-chat"  # Advanced model for teacher synthesis
     azure_openai_embedding_deployment: str = "text-embedding-3-large-957047"
     
     # ===== Database =====
