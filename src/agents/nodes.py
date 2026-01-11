@@ -110,8 +110,17 @@ async def retrieve_kazanimlar(state: QuestionAnalysisState) -> Dict[str, Any]:
                 "retrieval_retry_count": retry_count + 1
             }
         
+        # Deduplicate results by kazanim_code
+        seen_codes = set()
+        unique_results = []
+        for r in results:
+            code = r.get("kazanim_code")
+            if code and code not in seen_codes:
+                seen_codes.add(code)
+                unique_results.append(r)
+        
         return {
-            "matched_kazanimlar": results,
+            "matched_kazanimlar": unique_results,
             "status": "processing"
         }
         
@@ -187,23 +196,41 @@ async def retrieve_textbook(state: QuestionAnalysisState) -> Dict[str, Any]:
 
 
 @log_node_execution("rerank_results")
-@with_timeout(20.0)
+@with_timeout(30.0)  # Increased timeout for LLM call
 async def rerank_results(state: QuestionAnalysisState) -> Dict[str, Any]:
     """
-    Node: Rerank retrieved results for better relevance.
+    Node: Rerank retrieved results using LLM for better relevance.
     
-    Uses semantic similarity to reorder kazanımlar.
+    Uses the LLMReranker to score each kazanım's relevance
+    to the question and reorders by blended score.
     """
     matched = state.get("matched_kazanimlar", [])
+    question_text = state.get("question_text", "")
     
     if len(matched) <= 1:
         return {}  # No reranking needed
     
-    # For now, just return as-is
-    # TODO: Implement LLM-based reranking if needed
-    return {
-        "matched_kazanimlar": matched[:5]  # Keep top 5
-    }
+    if not question_text:
+        # Can't rerank without question text
+        return {"matched_kazanimlar": matched[:5]}
+    
+    try:
+        from src.rag.reranker import LLMReranker
+        
+        reranker = LLMReranker()
+        reranked = await reranker.rerank(
+            question=question_text,
+            kazanimlar=matched,
+            top_k=5,
+            score_blend_ratio=0.5  # 50% original, 50% LLM score
+        )
+        
+        return {"matched_kazanimlar": reranked}
+        
+    except Exception as e:
+        print(f"[rerank_results] Reranking error: {e}, using original order")
+        # Fallback to original order
+        return {"matched_kazanimlar": matched[:5]}
 
 
 @log_node_execution("generate_response")

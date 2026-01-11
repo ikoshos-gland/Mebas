@@ -3,13 +3,16 @@ MEB RAG Sistemi - Embedding Fonksiyonları
 Azure OpenAI text-embedding-3-large ile vektör üretimi (3072 dim)
 """
 from openai import AzureOpenAI
-from typing import List
+from typing import List, Optional
 import asyncio
 
 from config.settings import get_settings
 
 # Singleton client
 _client = None
+
+# Cache TTL for embeddings (24 hours - embeddings are deterministic)
+EMBEDDING_CACHE_TTL = 86400
 
 
 def get_embedding_client() -> AzureOpenAI:
@@ -25,12 +28,35 @@ def get_embedding_client() -> AzureOpenAI:
     return _client
 
 
-def embed_text(text: str) -> List[float]:
+def _get_cached_embedding(text: str) -> Optional[List[float]]:
+    """Try to get embedding from cache."""
+    try:
+        from src.cache import get_embedding_cache
+        cache = get_embedding_cache()
+        cache_key = cache.generate_key("embed_v1", text)
+        return cache.get(cache_key)
+    except ImportError:
+        return None
+
+
+def _cache_embedding(text: str, embedding: List[float]) -> None:
+    """Store embedding in cache."""
+    try:
+        from src.cache import get_embedding_cache
+        cache = get_embedding_cache()
+        cache_key = cache.generate_key("embed_v1", text)
+        cache.set(cache_key, embedding, ttl=EMBEDDING_CACHE_TTL)
+    except ImportError:
+        pass
+
+
+def embed_text(text: str, use_cache: bool = True) -> List[float]:
     """
-    Convert text to embedding vector using text-embedding-ada-002.
+    Convert text to embedding vector using text-embedding-3-large.
     
     Args:
         text: Text to embed
+        use_cache: Whether to use caching (default True)
         
     Returns:
         List of 3072 floats (embedding vector for text-embedding-3-large)
@@ -48,12 +74,24 @@ def embed_text(text: str) -> List[float]:
     if len(text) < 3:
         raise ValueError("Metin çok kısa, embedding oluşturulamaz")
     
-    print(f"DEBUG: Using embedding model: '{settings.azure_openai_embedding_deployment}'")
+    # Check cache first
+    if use_cache:
+        cached = _get_cached_embedding(text)
+        if cached is not None:
+            return cached
+    
+    # Call Azure OpenAI API
     response = client.embeddings.create(
         input=[text],
         model=settings.azure_openai_embedding_deployment
     )
-    return response.data[0].embedding
+    embedding = response.data[0].embedding
+    
+    # Cache the result
+    if use_cache:
+        _cache_embedding(text, embedding)
+    
+    return embedding
 
 
 async def embed_text_async(text: str) -> List[float]:

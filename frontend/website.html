@@ -315,12 +315,27 @@
                     </div>
 
                     <div class="flex pb-2 gap-2">
-                        <button
-                            class="p-2 rounded-lg hover:bg-[#1C1917]/5 transition-colors relative text-neutral-400 hover:text-[#1C1917]"
+                        <input type="file" id="file-upload-input" accept="image/*" class="hidden">
+                        <button id="upload-btn" type="button"
+                            class="p-2 rounded-lg hover:bg-[#1C1917]/5 transition-colors text-neutral-400 hover:text-[#1C1917]"
                             title="Upload Image">
                             <i data-lucide="paperclip" class="w-5 h-5 transition-colors stroke-[1.5]"></i>
-                            <input type="file" accept="image/*" class="absolute inset-0 opacity-0 cursor-pointer">
                         </button>
+                    </div>
+
+                    <!-- Image Preview Container (hidden by default) -->
+                    <div id="image-preview-container" class="hidden flex-shrink-0 pb-2">
+                        <div class="flex items-center gap-2 px-3 py-2 bg-[#F5F5F4] rounded-lg border border-[#E7E5E4]">
+                            <div class="bg-white p-1.5 rounded border border-[#E7E5E4]">
+                                <i data-lucide="image" class="w-4 h-4 text-[#78350F]"></i>
+                            </div>
+                            <span id="image-preview-name"
+                                class="font-mono text-xs text-neutral-600 max-w-[150px] truncate"></span>
+                            <button id="remove-image-btn" type="button"
+                                class="p-1 hover:bg-neutral-200 rounded transition-colors">
+                                <i data-lucide="x" class="w-3 h-3 text-neutral-500"></i>
+                            </button>
+                        </div>
                     </div>
 
                     <textarea rows="1" placeholder="Ask about your curriculum..."
@@ -608,8 +623,11 @@
             chatContainer: document.querySelector('#chat-stream > div'),
             inputArea: document.querySelector('textarea'),
             sendButton: document.getElementById('send-btn'),
-            fileInput: document.querySelector('input[type="file"]'),
-            filePreviewBtn: document.querySelector('button[title="Upload Image"]'),
+            fileInput: document.getElementById('file-upload-input'),
+            uploadBtn: document.getElementById('upload-btn'),
+            imagePreviewContainer: document.getElementById('image-preview-container'),
+            imagePreviewName: document.getElementById('image-preview-name'),
+            removeImageBtn: document.getElementById('remove-image-btn'),
             gradeSelect: document.querySelector('select'),
             examToggle: document.querySelector('.custom-toggle'),
             newChatBtn: document.getElementById('new-chat-btn')
@@ -641,12 +659,45 @@
         });
 
         // 2. File Upload Handling
+        // Click on upload button triggers file input
+        elements.uploadBtn.addEventListener('click', () => {
+            elements.fileInput.click();
+        });
+
+        // Helper function to show image preview
+        function showImagePreview(fileName) {
+            elements.imagePreviewName.textContent = fileName;
+            elements.imagePreviewContainer.classList.remove('hidden');
+            elements.uploadBtn.classList.add('bg-[#78350F]/10', 'text-[#78350F]');
+            const icon = elements.uploadBtn.querySelector('i');
+            icon.setAttribute('data-lucide', 'image');
+            lucide.createIcons();
+        }
+
+        // Helper function to hide image preview and clear state
+        function clearImageSelection() {
+            state.current_image = null;
+            state.current_image_file = null;
+            elements.fileInput.value = '';
+            elements.imagePreviewContainer.classList.add('hidden');
+            elements.imagePreviewName.textContent = '';
+            elements.uploadBtn.classList.remove('bg-[#78350F]/10', 'text-[#78350F]');
+            const icon = elements.uploadBtn.querySelector('i');
+            icon.setAttribute('data-lucide', 'paperclip');
+            lucide.createIcons();
+        }
+
+        // Remove image button handler
+        elements.removeImageBtn.addEventListener('click', () => {
+            clearImageSelection();
+        });
+
         elements.fileInput.addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (!file) return;
 
             if (file.size > 10 * 1024 * 1024) {
-                alert('File too large (Max 10MB)');
+                alert('Dosya çok büyük (Maks 10MB)');
                 return;
             }
 
@@ -656,13 +707,62 @@
             const reader = new FileReader();
             reader.onload = (e) => {
                 state.current_image = e.target.result; // Data URL
-                // Visual feedback on button
-                elements.filePreviewBtn.classList.add('bg-[#78350F]/10', 'text-[#78350F]');
-                const icon = elements.filePreviewBtn.querySelector('i');
-                icon.setAttribute('data-lucide', 'image');
-                lucide.createIcons();
+                showImagePreview(file.name);
+                console.log('Image loaded successfully:', file.name);
             };
             reader.readAsDataURL(file);
+        });
+
+        // Helper function to process dropped/selected image file
+        function processImageFile(file) {
+            if (!file || !file.type.startsWith('image/')) {
+                alert('Lütfen bir görsel dosyası seçin');
+                return;
+            }
+
+            if (file.size > 10 * 1024 * 1024) {
+                alert('Dosya çok büyük (Maks 10MB)');
+                return;
+            }
+
+            state.current_image_file = file;
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                state.current_image = e.target.result;
+                showImagePreview(file.name);
+                console.log('Image loaded successfully:', file.name);
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // 2b. Drag and Drop Handling
+        const inputContainer = document.querySelector('.input-glass');
+
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            inputContainer.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+            });
+        });
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            inputContainer.addEventListener(eventName, () => {
+                inputContainer.classList.add('ring-2', 'ring-[#78350F]', 'bg-[#78350F]/5');
+            });
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            inputContainer.addEventListener(eventName, () => {
+                inputContainer.classList.remove('ring-2', 'ring-[#78350F]', 'bg-[#78350F]/5');
+            });
+        });
+
+        inputContainer.addEventListener('drop', (e) => {
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                processImageFile(files[0]);
+            }
         });
 
         // 3. Sending Messages
@@ -675,118 +775,163 @@
         });
 
         async function handleSend() {
-            const text = elements.inputArea.value.trim();
-            if ((!text && !state.current_image) || state.is_loading) return;
-
-            // UI Updates
-            state.is_loading = true;
-            elements.inputArea.value = '';
-            elements.inputArea.disabled = true;
-            elements.filePreviewBtn.classList.remove('bg-[#78350F]/10', 'text-[#78350F]'); // Reset icon
-
-            // 1. Render User Message
-            appendUserMessage(text, state.current_image_file?.name);
-
-            // 2. Prepare Payload
-            const payload = {
-                question_text: text,
-                question_image_base64: state.current_image ? state.current_image.split(',')[1] : null, // Remove header
-                grade: state.grade,
-                subject: state.subject,
-                is_exam_mode: state.is_exam_mode,
-                thread_id: state.thread_id
-            };
-
-            // Clear image state after sending
-            const usedImage = state.current_image;
-            state.current_image = null;
-            state.current_image_file = null;
-
-            // 3. Create Placeholder for AI Response
-            const aiMessageId = appendAIPlaceholder();
-            const aiContentContainer = document.getElementById(aiMessageId).querySelector('.prose');
-
             try {
-                // 4. API Call - Use streaming for text, standard for images
-                if (usedImage) {
-                    // Image analysis - standard request
-                    const response = await fetch(`${API_BASE_URL}/analyze/image`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            image_base64: payload.question_image_base64,
-                            grade: payload.grade,
-                            subject: payload.subject,
-                            is_exam_mode: payload.is_exam_mode
-                        })
-                    });
-                    if (!response.ok) throw new Error(`API Error: ${response.status}`);
-                    const data = await response.json();
-                    updateAIResponse(aiMessageId, data);
-                } else {
-                    // Text analysis - use streaming!
-                    const response = await fetch(`${API_BASE_URL}/analyze/text-stream`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            question_text: payload.question_text,
-                            grade: payload.grade,
-                            subject: payload.subject,
-                            is_exam_mode: payload.is_exam_mode
-                        })
-                    });
+                // Critical Element Check
+                if (!elements.chatContainer) {
+                    console.error('Chat container not found! Selector: #chat-stream > div');
+                    alert('Hata: Sohbet alanı bulunamadı. Lütfen sayfayı yenileyin.');
+                    return;
+                }
 
-                    if (!response.ok) throw new Error(`API Error: ${response.status}`);
+                const text = elements.inputArea.value.trim();
+                // If loading, ignore
+                if (state.is_loading) return;
+                // If no text and no image, ignore
+                if (!text && !state.current_image) return;
 
-                    const reader = response.body.getReader();
-                    const decoder = new TextDecoder();
-                    let ragData = null;
-                    let teacherContent = '';
+                // Store image info before clearing
+                const imageName = state.current_image_file?.name;
+                const imageBase64 = state.current_image ? state.current_image.split(',')[1] : null;
 
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
+                // UI Updates
+                state.is_loading = true;
+                elements.inputArea.value = '';
+                elements.inputArea.disabled = true;
 
-                        const chunk = decoder.decode(value);
-                        const lines = chunk.split('\n');
+                // Hide image preview and reset state
+                try {
+                    elements.imagePreviewContainer.classList.add('hidden');
+                    elements.uploadBtn.classList.remove('bg-[#78350F]/10', 'text-[#78350F]');
+                    const icon = elements.uploadBtn.querySelector('i');
+                    if (icon) icon.setAttribute('data-lucide', 'paperclip');
+                    if (window.lucide) window.lucide.createIcons();
+                } catch (uiError) {
+                    console.warn('UI update error (non-fatal):', uiError);
+                }
 
-                        for (const line of lines) {
-                            if (line.startsWith('data: ')) {
-                                try {
-                                    const event = JSON.parse(line.slice(6));
+                // 1. Render User Message
+                appendUserMessage(text, imageName);
 
-                                    if (event.event === 'rag_complete') {
-                                        ragData = event.data;
-                                        // Show RAG results immediately
-                                        updateAIResponseStreaming(aiMessageId, ragData, '');
-                                    } else if (event.event === 'teacher_token') {
-                                        teacherContent += event.token;
-                                        // Update teacher section live
-                                        updateAIResponseStreaming(aiMessageId, ragData, teacherContent);
-                                    } else if (event.event === 'done') {
-                                        // Final update
-                                        if (ragData) {
-                                            ragData.teacher_explanation = teacherContent;
-                                            updateAIResponse(aiMessageId, ragData);
+                // 2. Prepare Payload
+                const payload = {
+                    question_text: text,
+                    question_image_base64: imageBase64,
+                    grade: state.grade,
+                    subject: state.subject,
+                    is_exam_mode: state.is_exam_mode,
+                    thread_id: state.thread_id
+                };
+
+                // Clear image state after sending
+                const usedImage = state.current_image;
+                state.current_image = null;
+                state.current_image_file = null;
+                if (elements.fileInput) elements.fileInput.value = '';
+
+                // 3. Create Placeholder for AI Response
+                const aiMessageId = appendAIPlaceholder();
+                const aiContentContainer = document.getElementById(aiMessageId)?.querySelector('.prose');
+
+                if (!aiContentContainer) {
+                    throw new Error('AI message placeholder could not be created');
+                }
+
+                try {
+                    // 4. API Call
+                    if (usedImage) {
+                        // Image analysis - standard request
+                        const response = await fetch(`${API_BASE_URL}/analyze/image`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                image_base64: payload.question_image_base64,
+                                grade: payload.grade,
+                                subject: payload.subject,
+                                is_exam_mode: payload.is_exam_mode
+                            })
+                        });
+                        if (!response.ok) throw new Error(`API Error: ${response.status}`);
+                        const data = await response.json();
+                        updateAIResponse(aiMessageId, data);
+                    } else {
+                        // Text analysis - stream
+                        const response = await fetch(`${API_BASE_URL}/analyze/text-stream`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                question_text: payload.question_text,
+                                grade: payload.grade,
+                                subject: payload.subject,
+                                is_exam_mode: payload.is_exam_mode
+                            })
+                        });
+
+                        if (!response.ok) throw new Error(`API Error: ${response.status}`);
+
+                        const reader = response.body.getReader();
+                        const decoder = new TextDecoder();
+                        let ragData = null;
+                        let teacherContent = '';
+
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+
+                            const chunk = decoder.decode(value);
+                            const chunks = chunk.split('\n\n'); // SSE messages separated by double newline
+
+                            for (const msg of chunks) {
+                                if (!msg.trim()) continue;
+                                const lines = msg.split('\n');
+                                for (const line of lines) {
+                                    if (line.startsWith('data: ')) {
+                                        try {
+                                            const eventData = JSON.parse(line.slice(6));
+
+                                            // Handle different event formats (object with event field or direct data)
+                                            // Our backend sends {event: "...", data: ...} or {event: "done"}
+
+                                            const eventType = eventData.event;
+
+                                            if (eventType === 'rag_complete') {
+                                                ragData = eventData.data;
+                                                updateAIResponseStreaming(aiMessageId, ragData, '');
+                                            } else if (eventType === 'teacher_token') {
+                                                teacherContent += eventData.token;
+                                                updateAIResponseStreaming(aiMessageId, ragData, teacherContent);
+                                            } else if (eventType === 'done') {
+                                                if (ragData) {
+                                                    ragData.teacher_explanation = teacherContent;
+                                                    updateAIResponse(aiMessageId, ragData);
+                                                }
+                                            } else if (eventType === 'error') {
+                                                throw new Error(eventData.error);
+                                            }
+                                        } catch (e) {
+                                            console.warn('SSE Parse Error:', e, line);
                                         }
-                                    } else if (event.event === 'error') {
-                                        throw new Error(event.error);
                                     }
-                                } catch (e) {
-                                    // Ignore JSON parse errors for incomplete chunks
                                 }
                             }
                         }
                     }
+
+                } catch (apiError) {
+                    console.error('API Call Failed:', apiError);
+                    if (aiContentContainer) {
+                        aiContentContainer.innerHTML = `<p class="text-red-600">Bağlantı hatası: ${apiError.message}. Lütfen Docker API'nin çalıştığından emin olun.</p>`;
+                    }
+                } finally {
+                    state.is_loading = false;
+                    elements.inputArea.disabled = false;
+                    elements.inputArea.focus();
                 }
 
-            } catch (error) {
-                console.error(error);
-                aiContentContainer.innerHTML = `<p class="text-red-600">Connection error: ${error.message}. Please make sure Docker API is running.</p>`;
-            } finally {
+            } catch (err) {
+                console.error('Critical Error in handleSend:', err);
+                alert(`Beklenmeyen bir hata oluştu:\n${err.message}`);
                 state.is_loading = false;
                 elements.inputArea.disabled = false;
-                elements.inputArea.focus();
             }
         }
 
@@ -992,33 +1137,6 @@
             const iconContainer = container.querySelector('.w-8.h-8');
             iconContainer.innerHTML = `<i data-lucide="sparkles" class="w-3.5 h-3.5 text-[#FDFCF8]"></i>`;
 
-            // Build Kazanım Cards HTML
-            let kazanimlarHtml = '';
-            if (output.matched_kazanimlar && output.matched_kazanimlar.length > 0) {
-                kazanimlarHtml = `
-                    <div class="mb-6">
-                        <h3 class="font-serif-custom text-base italic text-[#78350F] mb-3 flex items-center gap-2">
-                            <i data-lucide="target" class="w-4 h-4"></i>
-                            Eşleşen Kazanımlar
-                        </h3>
-                        <div class="space-y-3">
-                            ${output.matched_kazanimlar.slice(0, 5).map(k => `
-                                <div class="bg-[#F5F5F4]/60 rounded-lg p-4 border border-[#E7E5E4] hover:border-[#78350F]/30 transition-colors">
-                                    <div class="flex items-start justify-between gap-3 mb-2">
-                                        <span class="font-mono-custom text-xs font-semibold text-[#78350F] bg-[#78350F]/10 px-2 py-1 rounded">${k.code || 'Kazanım'}</span>
-                                        <div class="flex items-center gap-2">
-                                            ${k.grade ? `<span class="font-mono-custom text-[10px] text-neutral-500 bg-white px-2 py-0.5 rounded border border-[#E7E5E4]">${k.grade}. Sınıf</span>` : ''}
-                                            <span class="font-mono-custom text-[10px] text-neutral-400">%${(k.score * 100).toFixed(0)}</span>
-                                        </div>
-                                    </div>
-                                    <p class="text-sm text-[#1C1917]/80 leading-relaxed">${k.description || ''}</p>
-                                </div>
-                            `).join('')}
-                        </div>
-                    </div>
-                `;
-            }
-
             // Build Textbook References HTML
             let textbookHtml = '';
             if (output.textbook_references && output.textbook_references.length > 0) {
@@ -1046,6 +1164,98 @@
             // Summary text
             const summaryText = output.summary || 'Analiz tamamlandı.';
             const confidenceValue = output.confidence || 0;
+
+            // 1. Matched Kazanımlar (Move logic here but keep separate variable)
+            let kazanimlarHtml = '';
+            if (output.matched_kazanimlar && output.matched_kazanimlar.length > 0) {
+                kazanimlarHtml = `
+                    <div class="mb-6">
+                        <h3 class="font-serif-custom text-base italic text-[#78350F] mb-3 flex items-center gap-2">
+                            <i data-lucide="target" class="w-4 h-4"></i>
+                            Eşleşen Kazanımlar
+                        </h3>
+                        <div class="space-y-3">
+                            ${output.matched_kazanimlar.slice(0, 5).map(k => `
+                                <div class="bg-[#F5F5F4]/60 rounded-lg p-4 border border-[#E7E5E4] hover:border-[#78350F]/30 transition-colors">
+                                    <div class="flex items-start justify-between gap-3 mb-2">
+                                        <span class="font-mono-custom text-xs font-semibold text-[#78350F] bg-[#78350F]/10 px-2 py-1 rounded">${k.code || 'Kazanım'}</span>
+                                        <div class="flex items-center gap-2">
+                                            ${k.grade ? `<span class="font-mono-custom text-[10px] text-neutral-500 bg-white px-2 py-0.5 rounded border border-[#E7E5E4]">${k.grade}. Sınıf</span>` : ''}
+                                            <span class="font-mono-custom text-[10px] text-neutral-400">%${(k.score * 100).toFixed(0)}</span>
+                                        </div>
+                                    </div>
+                                    <p class="text-sm text-[#1C1917]/80 leading-relaxed line-clamp-2 hover:line-clamp-none transition-all cursor-pointer" title="Tamamını görmek için üzerine gelin">${k.description || ''}</p>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // 2. Solution Steps HTML (NEW)
+            let solutionHtml = '';
+            if (output.solution_steps && output.solution_steps.length > 0) {
+                solutionHtml = `
+                    <div class="mb-6">
+                         <h3 class="font-serif-custom text-lg italic text-[#1C1917] mb-4 flex items-center gap-2">
+                            <i data-lucide="list-checks" class="w-5 h-5 text-[#78350F]"></i>
+                            Çözüm Adımları
+                        </h3>
+                        <div class="space-y-4 relative">
+                            <!-- Vertical connector line -->
+                            <div class="absolute left-[15px] top-4 bottom-4 w-[1px] bg-[#E7E5E4] -z-10"></div>
+                            
+                            ${output.solution_steps.map((step, idx) => `
+                                <div class="flex gap-4 group">
+                                    <div class="flex-shrink-0 w-8 h-8 rounded-full bg-white border border-[#E7E5E4] flex items-center justify-center font-mono-custom text-xs text-[#78350F] shadow-sm group-hover:border-[#78350F]/40 transition-colors">
+                                        ${step.step_number || idx + 1}
+                                    </div>
+                                    <div class="flex-1 bg-white/50 rounded-lg p-3 border border-[#E7E5E4] hover:bg-white transition-colors">
+                                        <p class="text-sm text-[#1C1917] font-medium mb-1">${step.description}</p>
+                                        ${step.result ? `<div class="text-xs font-mono-custom text-[#78350F] bg-[#78350F]/5 p-2 rounded border border-[#78350F]/10">➔ ${step.result}</div>` : ''}
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // 3. Final Answer HTML (NEW)
+            let finalAnswerHtml = '';
+            if (output.final_answer) {
+                finalAnswerHtml = `
+                    <div class="mb-6 p-1 bg-gradient-to-br from-[#78350F]/20 to-[#9A3412]/20 rounded-xl">
+                        <div class="bg-[#FDFCF8] rounded-lg p-5 border border-[#78350F]/10 flex flex-col items-center text-center">
+                            <span class="font-mono-custom text-[10px] text-[#78350F] uppercase tracking-widest mb-1">Doğru Cevap</span>
+                            <div class="font-serif-custom text-2xl text-[#1C1917] font-medium">
+                                ${output.final_answer}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // 4. Prerequisite Gaps / Warnings (NEW)
+            let gapsHtml = '';
+            if (output.prerequisite_gaps && output.prerequisite_gaps.length > 0) {
+                gapsHtml = `
+                     <div class="mb-6 bg-amber-50 rounded-xl p-4 border border-amber-200/60">
+                        <h4 class="font-serif-custom text-base text-amber-900 mb-2 flex items-center gap-2">
+                            <i data-lucide="alert-triangle" class="w-4 h-4"></i>
+                            Dikkat Edilmesi Gereken Noktalar
+                        </h4>
+                        <ul class="space-y-2">
+                             ${output.prerequisite_gaps.map(gap => `
+                                <li class="text-sm text-amber-800/90 flex gap-2">
+                                    <span class="text-amber-500">•</span>
+                                    <span>${gap.missing_kazanim_description || gap.suggestion || 'Eksik bilgi tespit edildi.'}</span>
+                                </li>
+                            `).join('')}
+                        </ul>
+                    </div>
+                `;
+            }
 
             // Teacher explanation (GPT-5.2 synthesized)
             let teacherHtml = '';
@@ -1080,10 +1290,19 @@
                         </div>
                     </div>
 
-                    <!-- Teacher Explanation (GPT-5.2) - Most Important! -->
+                    <!-- Teacher Explanation (GPT-5.2) -->
                     ${teacherHtml}
+                    
+                    <!-- Prerequisite Gaps (Warnings) -->
+                    ${gapsHtml}
+                    
+                    <!-- Final Answer (Highlighted) -->
+                    ${finalAnswerHtml}
 
-                    <!-- Kazanımlar Section -->
+                    <!-- Solution Steps (The Core Content) -->
+                    ${solutionHtml}
+
+                    <!-- Kazanımlar Section (Now pushed down) -->
                     ${kazanimlarHtml}
 
                     <!-- Textbook References Section -->

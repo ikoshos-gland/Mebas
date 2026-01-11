@@ -15,6 +15,7 @@ from api.models import HealthResponse, ErrorResponse
 from api.routes.analysis import router as analysis_router
 from api.routes.feedback import router as feedback_router
 from api.routes.content import router as content_router
+from api.routes.cache import router as cache_router
 from config.settings import get_settings
 from config.logging import configure_logging
 import logging
@@ -162,6 +163,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 app.include_router(analysis_router)
 app.include_router(feedback_router)
 app.include_router(content_router)
+app.include_router(cache_router)
 
 
 @app.get("/", tags=["Root"])

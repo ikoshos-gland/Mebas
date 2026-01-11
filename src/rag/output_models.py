@@ -58,6 +58,13 @@ class ImageReference(BaseModel):
     why_relevant: str = Field(..., description="Bu görselin neden ilgili olduğu")
 
 
+class SolutionStep(BaseModel):
+    """A step in the solution process"""
+    step_number: int = Field(..., description="Adım numarası")
+    description: str = Field(..., description="Bu adımda ne yapıldığı")
+    result: Optional[str] = Field(None, description="Bu adımın sonucu (varsa)")
+
+
 class AnalysisOutput(BaseModel):
     """
     Complete analysis output model.
@@ -68,6 +75,17 @@ class AnalysisOutput(BaseModel):
     summary: str = Field(
         ..., 
         description="Kullanıcıya gösterilecek ana özet mesajı"
+    )
+    
+    # Solution
+    solution_steps: List[SolutionStep] = Field(
+        default_factory=list,
+        description="Sorunun adım adım çözümü"
+    )
+    
+    final_answer: Optional[str] = Field(
+        None, 
+        description="Sorunun nihai cevabı"
     )
     
     # Matched kazanımlar

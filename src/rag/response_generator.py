@@ -21,10 +21,12 @@ kazanımlarla eşleştiriyorsun.
 
 KURALLAR:
 1. Sadece verilen kazanımları kullan, uydurma!
-2. Ön koşul eksikliği varsa mutlaka belirt
-3. Ders kitabından referans verirken sayfa numarası kullan
-4. Türkçe yanıt ver
-5. Özet mesajı öğrenci için anlaşılır olmalı"""
+2. Soruyu ADIM ADIM çöz ve her adımı açıkla.
+3. Nihai cevabı net bir şekilde belirt.
+4. Ön koşul eksikliği varsa mutlaka belirt.
+5. Ders kitabından referans verirken sayfa numarası kullan.
+6. Türkçe yanıt ver.
+7. Özet mesajı öğrenci için anlaşılır olmalı."""
 
     ANALYSIS_PROMPT = """## Soru
 {question_text}
@@ -39,12 +41,17 @@ KURALLAR:
 {textbook_sections}
 
 ## Görev
-Bu soruyu analiz et ve yapılandırılmış çıktı üret:
-1. Öğrenciye anlaşılır bir özet yaz
-2. En uygun kazanımları seç ve neden eşleştiğini açıkla
-3. Ön koşul eksikliği varsa belirt
-4. Ders kitabından referanslar ekle
-5. Çalışma önerileri sun"""
+Bu soruyu analiz et ve AŞAĞIDAKİ YAPIDA BİR ÇIKIŞ ÜRET. 'solution_steps' alanı BOŞ OLAMAZ!
+
+ZORUNLU ADIMLAR:
+1. [ÖNEMLİ] Soruyu adım adım çöz ve her mantıksal adımı 'solution_steps' listesine ekle. En az 3 adım olmalı.
+2. [ÖNEMLİ] Sorunun net cevabını 'final_answer' alanına yaz (Örn: "D şıkkı, 20").
+3. Eşleşen kazanımları seç.
+4. Ön koşul eksikliği varsa belirt.
+5. Öğrenci için motive edici bir özet yaz.
+
+Eğer soru bir görsel ise ve metin yoksa, görseldeki soruyu çözmeye çalış.
+Eğer soru çözülemiyorsa, solution_steps alanına "Soruyu çözmek için yeterli bilgi yok" şeklinde tek bir adım ekle."""
     
     def __init__(self, llm: Optional[AzureChatOpenAI] = None):
         """
