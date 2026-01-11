@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     azure_openai_teacher_deployment: str = "gpt-5.2-chat"  # Advanced model for teacher synthesis
     azure_openai_embedding_deployment: str = "text-embedding-3-large-957047"
     
+    # ===== RAG Retrieval Settings =====
+    rag_confidence_threshold: float = 0.50  # Lowered - blended scores tend to be low
+    rag_kazanim_top_k: int = 5  # Max kazanımlar to retrieve
+    rag_textbook_top_k: int = 5  # Max textbook chunks (multiple grades)
+    
     # ===== Database =====
     database_url: str = "sqlite:///data/meb_rag.db"
     

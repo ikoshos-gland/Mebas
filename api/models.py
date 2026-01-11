@@ -132,3 +132,35 @@ class ErrorResponse(BaseModel):
     error: str
     detail: Optional[str] = None
     status_code: int = 500
+
+
+# ================== CHAT MODELS ==================
+
+class ChatRequest(BaseModel):
+    """Request for chat endpoint (unified interface)"""
+    message: Optional[str] = Field(None, description="User's text message")
+    image_base64: Optional[str] = Field(None, description="Base64 encoded image (optional)")
+    session_id: Optional[str] = Field(None, description="Session ID for conversation continuity")
+    grade: Optional[int] = Field(None, ge=1, le=12, description="Student grade level")
+    subject: Optional[str] = Field(None, description="Subject code (M, F, T...)")
+    is_exam_mode: bool = Field(False, description="YKS/sınav modu")
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "message": "Bu konuyu açıklar mısın?",
+                "session_id": "abc-123",
+                "grade": 12
+            }
+        }
+    }
+
+
+class ChatResponse(BaseModel):
+    """Response for chat endpoint"""
+    session_id: str = Field(..., description="Session ID for continuity")
+    response: str = Field(..., description="Assistant's response")
+    route: str = Field(..., description="Which route was taken: new_image_analysis or follow_up_chat")
+    analysis_id: Optional[str] = Field(None, description="Analysis ID if new analysis was done")
+    processing_time_ms: int = Field(0, description="Processing time")
+

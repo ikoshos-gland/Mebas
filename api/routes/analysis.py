@@ -13,7 +13,9 @@ from api.models import (
     AnalyzeTextRequest,
     AnalysisResponse,
     KazanimMatch,
-    PrerequisiteGap
+    PrerequisiteGap,
+    ChatRequest,
+    ChatResponse
 )
 from src.agents import MebRagGraph, get_effective_grade
 
@@ -57,16 +59,50 @@ async def analyze_image(request: AnalyzeImageRequest):
         
         # Extract response data
         response_data = result.get("response", {})
+        related_chunks = result.get("related_chunks", [])
+        question_text = result.get("question_text", "")
+        
+        # Step 1: Analyze question with dedicated QuestionAnalyzer (separate from RAG)
+        question_analysis = None
+        try:
+            from src.rag.question_analyzer import QuestionAnalyzer
+            analyzer = QuestionAnalyzer()
+            question_analysis = await analyzer.analyze(question_text)
+        except Exception as qa_error:
+            print(f"QuestionAnalyzer error: {qa_error}")
+            question_analysis = None
+        
+        # Step 2: Generate teacher explanation using synthesizer with pre-solved question
+        teacher_explanation = None
+        try:
+            from src.rag.teacher_synthesizer import TeacherSynthesizer
+            synthesizer = TeacherSynthesizer()
+            teacher_explanation = await synthesizer.synthesize(
+                question_text=question_text,
+                matched_kazanimlar=result.get("matched_kazanimlar", []),
+                textbook_chunks=related_chunks,
+                question_analysis=question_analysis,  # Pass pre-solved analysis
+                summary=response_data.get("summary")
+            )
+        except Exception as synth_error:
+            # Log but don't fail - teacher explanation is optional enhancement
+            print(f"Teacher synthesis error (image): {synth_error}")
+            teacher_explanation = None
+        
+        total_time = int((time.time() - start_time) * 1000)
         
         return AnalysisResponse(
             analysis_id=result.get("analysis_id", ""),
             status=result.get("status", "unknown"),
             summary=response_data.get("summary"),
+            teacher_explanation=teacher_explanation,
             matched_kazanimlar=[
                 KazanimMatch(
                     code=k.get("kazanim_code", ""),
                     description=k.get("kazanim_description", ""),
                     score=k.get("score", 0),
+                    grade=k.get("grade"),
+                    subject=k.get("subject"),
                     reason=None
                 )
                 for k in result.get("matched_kazanimlar", [])
@@ -83,7 +119,7 @@ async def analyze_image(request: AnalyzeImageRequest):
             question_text=result.get("question_text"),
             detected_topics=result.get("detected_topics", []),
             confidence=response_data.get("confidence", 0) if isinstance(response_data, dict) else 0,
-            processing_time_ms=processing_time,
+            processing_time_ms=total_time,
             error=result.get("error")
         )
         
@@ -126,7 +162,17 @@ async def analyze_text(request: AnalyzeTextRequest):
                 "relevance": f"Eşleşme skoru: {chunk.get('score', 0):.2f}"
             })
         
-        # Generate teacher explanation using GPT-5.2
+        # Step 1: Analyze question with dedicated QuestionAnalyzer (separate from RAG)
+        question_analysis = None
+        try:
+            from src.rag.question_analyzer import QuestionAnalyzer
+            analyzer = QuestionAnalyzer()
+            question_analysis = await analyzer.analyze(request.question_text)
+        except Exception as qa_error:
+            print(f"QuestionAnalyzer error: {qa_error}")
+            question_analysis = None
+        
+        # Step 2: Generate teacher explanation using synthesizer with pre-solved question
         teacher_explanation = None
         try:
             from src.rag.teacher_synthesizer import TeacherSynthesizer
@@ -135,6 +181,7 @@ async def analyze_text(request: AnalyzeTextRequest):
                 question_text=request.question_text,
                 matched_kazanimlar=result.get("matched_kazanimlar", []),
                 textbook_chunks=related_chunks,
+                question_analysis=question_analysis,  # Pass pre-solved analysis
                 summary=response_data.get("summary")
             )
         except Exception as synth_error:
@@ -293,3 +340,159 @@ async def analyze_stream(request: AnalyzeTextRequest):
             "Connection": "keep-alive"
         }
     )
+
+# ================== UNIFIED CHAT ENDPOINT ==================
+
+@router.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    """
+    Unified chat endpoint with supervisor routing.
+    
+    - If image is present: Full RAG analysis
+    - If text only with prior context: Follow-up chat using stored context
+    """
+    import uuid
+    start_time = time.time()
+    
+    # Get or create session
+    from src.rag.conversation_context import get_conversation_manager
+    from src.rag.supervisor import Supervisor, RouteDecision, FollowUpChatbot
+    
+    manager = get_conversation_manager()
+    supervisor = Supervisor()
+    
+    session_id = request.session_id or str(uuid.uuid4())
+    context = manager.get_context(session_id)
+    has_context = context is not None
+    has_image = request.image_base64 is not None
+    
+    # Route decision
+    decision = supervisor.decide(
+        has_image=has_image,
+        has_context=has_context,
+        user_message=request.message
+    )
+    
+    if decision.decision == RouteDecision.NEW_IMAGE_ANALYSIS:
+        # Full RAG pipeline
+        graph = get_graph()
+        
+        try:
+            if has_image:
+                # Image analysis
+                result = await graph.analyze(
+                    question_image_base64=request.image_base64,
+                    user_grade=request.grade,
+                    user_subject=request.subject,
+                    is_exam_mode=request.is_exam_mode
+                )
+            else:
+                # Text analysis
+                result = await graph.analyze(
+                    question_text=request.message or "",
+                    user_grade=request.grade,
+                    user_subject=request.subject,
+                    is_exam_mode=request.is_exam_mode
+                )
+            
+            question_text = result.get("question_text", request.message or "")
+            related_chunks = result.get("related_chunks", [])
+            matched_kazanimlar = result.get("matched_kazanimlar", [])
+            
+            # Run QuestionAnalyzer
+            question_analysis = None
+            try:
+                from src.rag.question_analyzer import QuestionAnalyzer
+                analyzer = QuestionAnalyzer()
+                question_analysis = await analyzer.analyze(question_text)
+            except Exception as qa_error:
+                print(f"QuestionAnalyzer error: {qa_error}")
+            
+            # Run synthesizer
+            teacher_explanation = ""
+            try:
+                from src.rag.teacher_synthesizer import TeacherSynthesizer
+                synthesizer = TeacherSynthesizer()
+                teacher_explanation = await synthesizer.synthesize(
+                    question_text=question_text,
+                    matched_kazanimlar=matched_kazanimlar,
+                    textbook_chunks=related_chunks,
+                    question_analysis=question_analysis
+                )
+            except Exception as synth_error:
+                print(f"Synthesizer error: {synth_error}")
+                teacher_explanation = "Açıklama üretilemedi."
+            
+            # Store context for follow-up
+            context = manager.update_context(
+                session_id=session_id,
+                question_text=question_text,
+                question_image_base64=request.image_base64,
+                question_analysis=question_analysis,
+                matched_kazanimlar=matched_kazanimlar,
+                textbook_chunks=related_chunks,
+                teacher_explanation=teacher_explanation
+            )
+            
+            # Add to chat history
+            if request.message:
+                context.add_message("user", request.message)
+            context.add_message("assistant", teacher_explanation)
+            
+            processing_time = int((time.time() - start_time) * 1000)
+            
+            return ChatResponse(
+                session_id=session_id,
+                response=teacher_explanation,
+                route="new_image_analysis",
+                analysis_id=result.get("analysis_id"),
+                processing_time_ms=processing_time
+            )
+            
+        except Exception as e:
+            return ChatResponse(
+                session_id=session_id,
+                response=f"Analiz hatası: {str(e)}",
+                route="new_image_analysis",
+                processing_time_ms=int((time.time() - start_time) * 1000)
+            )
+    
+    else:
+        # Follow-up chat using stored context
+        if not context:
+            return ChatResponse(
+                session_id=session_id,
+                response="Önce bir soru görseli göndermelisiniz.",
+                route="follow_up_chat",
+                processing_time_ms=int((time.time() - start_time) * 1000)
+            )
+        
+        try:
+            chatbot = FollowUpChatbot()
+            response = await chatbot.chat(
+                user_question=request.message or "",
+                context_summary=context.get_context_summary(),
+                chat_history=context.messages
+            )
+            
+            # Update chat history
+            context.add_message("user", request.message or "")
+            context.add_message("assistant", response)
+            
+            processing_time = int((time.time() - start_time) * 1000)
+            
+            return ChatResponse(
+                session_id=session_id,
+                response=response,
+                route="follow_up_chat",
+                processing_time_ms=processing_time
+            )
+            
+        except Exception as e:
+            return ChatResponse(
+                session_id=session_id,
+                response=f"Sohbet hatası: {str(e)}",
+                route="follow_up_chat",
+                processing_time_ms=int((time.time() - start_time) * 1000)
+            )
+

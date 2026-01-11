@@ -15,25 +15,35 @@ class TeacherSynthesizer:
     Uses GPT-5.2 for advanced reasoning and pedagogical content generation.
     """
     
-    SYSTEM_PROMPT = """Sen deneyimli bir MEB müfredat uzmanı ve pedagogsun. 
-Öğrencinin sorusunu analiz edip, RAG sisteminden gelen kazanım ve ders kitabı bilgilerini kullanarak 
-öğretici bir açıklama yapıyorsun.
+    SYSTEM_PROMPT = """Sen deneyimli bir MEB müfredat uzmanı ve özel ders hocasısın.
+Sana çözülmüş bir soru, RAG sisteminden gelen kazanımlar ve ders kitabı bölümleri veriliyor.
 
-ROLÜN:
-1. Bir hoca gibi konuşursun - samimi ama profesyonel
-2. Öğrencinin eksik olduğu konuları tespit edersin
-3. MEB kazanımlarına göre neyi çalışması gerektiğini söylersin
-4. Ders kitabından ilgili bölümlere yönlendirirsin
-5. Karmaşık kavramları basit örneklerle açıklarsın
+⚠️ KRİTİK KURAL - HALÜSİNASYON YASAK:
+- Kazanım kodlarını ve açıklamalarını SADECE sana verilen listeden kullan
+- ASLA kazanım kodu veya açıklaması UYDURMA
+- Sana verilen kazanım listesinde olmayan bir kazanımdan bahsetme
+- "EŞLEŞEN KAZANIMLAR" bölümündeki bilgileri AYNEN kullan
 
-FORMAT:
-- Önce öğrencinin sorusunu kısaca özetle
-- Sonra ana kavramları açıkla
-- Eksik görülen konuları belirt
-- Çalışma önerileri sun
-- İlgili kazanım kodlarını referans ver
+Aşağıdaki yapıda yanıt ver:
 
-DİL: Türkçe, öğrenci dostu, teşvik edici"""
+**Soru ve Çözüm**
+Soruyu kısaca özetle, çözüm adımlarını açıkla ve doğru cevabı vurgula.
+
+**Kazanım Analizi**
+Sana verilen kazanımları kullanarak:
+- Direkt Kazanım: Listede verilen ilk kazanımın KODUNU ve AÇIKLAMASINI AYNEN yaz
+- İlgili Kazanımlar: Listedeki diğer kazanımların KODLARINI ve AÇIKLAMALARINI AYNEN yaz
+
+**Ders Kitabı**
+İlgili kavramları açıkla, sayfa referansları ver.
+
+**Özet**
+2-3 cümlelik özet ve çalışma önerisi.
+
+KURALLAR:
+- Türkçe, öğrenci dostu yaz
+- Başlıkları kalın yap
+- Kazanım bilgilerini UYDURMAK YASAK - sadece verilen listeyi kullan"""
 
     def __init__(self):
         """Initialize with Azure OpenAI GPT-5.2 client"""
@@ -51,6 +61,7 @@ DİL: Türkçe, öğrenci dostu, teşvik edici"""
         question_text: str,
         matched_kazanimlar: List[Dict[str, Any]],
         textbook_chunks: List[Dict[str, Any]],
+        question_analysis: Optional[Dict[str, Any]] = None,
         summary: Optional[str] = None
     ) -> str:
         """
@@ -60,6 +71,7 @@ DİL: Türkçe, öğrenci dostu, teşvik edici"""
             question_text: The student's original question
             matched_kazanimlar: Matched kazanımlar from RAG
             textbook_chunks: Related textbook content from RAG
+            question_analysis: Pre-solved question analysis from QuestionAnalyzer
             summary: Optional existing summary to enhance
             
         Returns:
@@ -67,11 +79,12 @@ DİL: Türkçe, öğrenci dostu, teşvik edici"""
         """
         import asyncio
         
-        # Build context from RAG results
+        # Build context from RAG results and question analysis
         context = self._build_context(
             question_text=question_text,
             kazanimlar=matched_kazanimlar,
             chunks=textbook_chunks,
+            question_analysis=question_analysis,
             summary=summary
         )
         
@@ -168,60 +181,128 @@ DİL: Türkçe, öğrenci dostu, teşvik edici"""
         question_text: str,
         kazanimlar: List[Dict[str, Any]],
         chunks: List[Dict[str, Any]],
-        summary: Optional[str]
+        question_analysis: Optional[Dict[str, Any]] = None,
+        summary: Optional[str] = None
     ) -> str:
-        """Build the context prompt from RAG results"""
+        """Build the context prompt from RAG results and question analysis"""
         
-        # Format kazanımlar
+        # Format kazanımlar - separate primary and related
         kazanim_text = ""
-        for i, k in enumerate(kazanimlar[:5], 1):
-            code = k.get("kazanim_code") or k.get("code", "")
-            desc = k.get("kazanim_description") or k.get("description", "")
-            grade = k.get("grade", "")
-            score = k.get("score", 0)
+        
+        if kazanimlar:
+            # First kazanım is the primary (highest confidence)
+            primary = kazanimlar[0]
+            code = primary.get("kazanim_code") or primary.get("code", "")
+            desc = primary.get("kazanim_description") or primary.get("description", "")
+            grade = primary.get("grade", "")
+            score = primary.get("blended_score") or primary.get("score", 0)
+            clean_desc = self._clean_kazanim_description(desc)
             
             kazanim_text += f"""
-{i}. **{code}** (Sınıf: {grade}, Eşleşme: %{score*100:.0f})
-   {desc[:500]}
+**DİREKT KAZANIM**
+- **Kod:** {code}
+- **Sınıf:** {grade}. Sınıf
+- **Açıklama:** {clean_desc}
 """
+            
+            # Rest are related kazanımlar
+            if len(kazanimlar) > 1:
+                kazanim_text += "\n**İLGİLİ KAZANIMLAR**\n"
+                for i, k in enumerate(kazanimlar[1:5], 1):
+                    code = k.get("kazanim_code") or k.get("code", "")
+                    desc = k.get("kazanim_description") or k.get("description", "")
+                    grade = k.get("grade", "")
+                    clean_desc = self._clean_kazanim_description(desc)
+                    
+                    kazanim_text += f"- **{code}** ({grade}. Sınıf): {clean_desc[:150]}...\n"
         
         if not kazanim_text:
             kazanim_text = "Eşleşen kazanım bulunamadı."
         
-        # Format textbook chunks
+        # Format textbook chunks - MUST include grade level clearly
         chunks_text = ""
-        for i, c in enumerate(chunks[:3], 1):
+        for i, c in enumerate(chunks[:5], 1):
             chapter = c.get("hierarchy_path") or c.get("chapter", "")
             pages = c.get("page_range") or c.get("pages", "")
-            content = c.get("content", "")[:400]
+            grade = c.get("grade", "")
+            content = c.get("content", "")[:800]
             
+            # Clear grade label
+            grade_label = f"{grade}. SINIF" if grade else "Sınıf Bilinmiyor"
             chunks_text += f"""
-{i}. **{chapter}** (Sayfa: {pages})
-   {content}...
+**{grade_label} - Sayfa {pages}**
+{chapter}
+{content}
 """
         
         if not chunks_text:
             chunks_text = "İlgili ders kitabı bölümü bulunamadı."
         
-        # Build full context
-        return f"""## Öğrenci Sorusu
-{question_text}
+        # Format question analysis if provided (from QuestionAnalyzer)
+        analysis_text = ""
+        if question_analysis:
+            qa = question_analysis
+            solution_steps = qa.get("solution_steps", [])
+            steps_text = "\n".join([f"  {i}. {step}" for i, step in enumerate(solution_steps, 1)]) if solution_steps else "Adımlar belirtilmedi"
+            
+            analysis_text = f"""
+## 🔍 SORU ANALİZİ (QuestionAnalyzer tarafından çözüldü)
+**Konu:** {qa.get("subject_area", "Belirsiz")}
+**Soru Tipi:** {qa.get("question_type", "Belirsiz")}
+**Temel Kavramlar:** {", ".join(qa.get("key_concepts", [])) or "Belirtilmedi"}
 
-## RAG Sistemi - Eşleşen Kazanımlar
+### Çözüm Adımları:
+{steps_text}
+
+### ✅ DOĞRU CEVAP: {qa.get("correct_answer", "Belirlenemedi")}
+**Açıklama:** {qa.get("explanation", "")}
+"""
+        
+        # Build full context with question analysis
+        return f"""## ÖĞRENCİNİN SORUSU
+{question_text}
+{analysis_text}
+## EŞLEŞEN KAZANIMLAR
 {kazanim_text}
 
-## RAG Sistemi - Ders Kitabı Referansları
+## DERS KİTABI BÖLÜMLERİ
 {chunks_text}
 
-## Mevcut Özet
-{summary or "Özet henüz üretilmedi."}
-
 ---
+Yukarıdaki bilgileri kullanarak 4 bölümlü yanıtını oluştur. SORU ANALİZİ bölümündeki çözümü temel al."""
 
-Yukarıdaki bilgileri kullanarak öğrenciye yardımcı olacak, öğretici ve teşvik edici bir açıklama yaz.
-Şunları içersin:
-1. Sorunun kısa bir analizi
-2. Temel kavramların açıklaması
-3. Hangi kazanımları çalışması gerektiği (kazanım kodlarıyla birlikte)
-4. Ders kitabından hangi bölümleri okuması gerektiği
-5. Ekstra tavsiyeler veya dikkat edilmesi gereken noktalar"""
+    def _clean_kazanim_description(self, desc: str) -> str:
+        """
+        Clean kazanım description by removing teacher-focused content.
+        
+        Removes sections like:
+        - "Öğrenme-öğretme uygulamaları"
+        - "Etkinlik:"
+        - "Öğretmen:" notes
+        """
+        import re
+        
+        # Common patterns for teacher notes
+        patterns = [
+            r'Öğrenme[–-]öğretme uygulamaları.*',  # Learning-teaching activities
+            r'Etkinlik\s*:.*',  # Activity suggestions
+            r'Öğretmen\s*:.*',  # Teacher notes
+            r'Örnek etkinlik.*',  # Example activities
+            r'a\)\s*Öğretmen.*',  # Numbered teacher instructions
+            r'b\)\s*Öğretmen.*',
+            r'c\)\s*Öğretmen.*',
+        ]
+        
+        cleaned = desc
+        for pattern in patterns:
+            cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE | re.DOTALL)
+        
+        # Remove excessive whitespace
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        
+        # Limit length
+        if len(cleaned) > 400:
+            cleaned = cleaned[:400] + "..."
+        
+        return cleaned
+

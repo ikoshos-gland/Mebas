@@ -7,6 +7,10 @@ import base64
 
 from src.agents.state import QuestionAnalysisState, get_effective_grade, get_effective_subject
 from src.agents.decorators import with_timeout, log_node_execution
+from config.settings import get_settings
+
+# Get settings for RAG configuration
+settings = get_settings()
 
 
 @log_node_execution("analyze_input")
@@ -99,7 +103,7 @@ async def retrieve_kazanimlar(state: QuestionAnalysisState) -> Dict[str, Any]:
             grade=grade,
             subject=subject,
             is_exam_mode=state.get("is_exam_mode", False),
-            top_k=10
+            top_k=settings.rag_kazanim_top_k
         )
         
         if not results:
@@ -164,7 +168,7 @@ async def retrieve_textbook(state: QuestionAnalysisState) -> Dict[str, Any]:
         related_chunks = await retriever.search_textbook_by_kazanimlar(
             kazanim_codes=kazanim_codes,
             question_text=question_text,
-            top_k=3
+            top_k=settings.rag_textbook_top_k
         )
         
         # 2. Retrieve Related Images
@@ -221,11 +225,22 @@ async def rerank_results(state: QuestionAnalysisState) -> Dict[str, Any]:
         reranked = await reranker.rerank(
             question=question_text,
             kazanimlar=matched,
-            top_k=5,
+            top_k=settings.rag_kazanim_top_k,
             score_blend_ratio=0.5  # 50% original, 50% LLM score
         )
         
-        return {"matched_kazanimlar": reranked}
+        # Filter by confidence threshold
+        filtered = [
+            k for k in reranked 
+            if k.get("blended_score", 0) >= settings.rag_confidence_threshold
+        ]
+        
+        # Ensure at least 3 kazanımlar are always returned for better context
+        min_kazanimlar = 3
+        if len(filtered) < min_kazanimlar and reranked:
+            filtered = reranked[:min_kazanimlar]
+        
+        return {"matched_kazanimlar": filtered}
         
     except Exception as e:
         print(f"[rerank_results] Reranking error: {e}, using original order")
