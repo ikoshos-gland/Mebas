@@ -16,6 +16,10 @@ from api.routes.analysis import router as analysis_router
 from api.routes.feedback import router as feedback_router
 from api.routes.content import router as content_router
 from api.routes.cache import router as cache_router
+from api.routes.auth import router as auth_router
+from api.routes.users import router as users_router
+from api.routes.conversations import router as conversations_router
+from api.routes.progress import router as progress_router
 from config.settings import get_settings
 from config.logging import configure_logging
 import logging
@@ -82,12 +86,21 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Add CORS
+settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=[
+        settings.frontend_url,
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+        "http://127.0.0.1:5173",
+    ],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -160,6 +173,10 @@ async def global_exception_handler(request: Request, exc: Exception):
 # ================== ROUTES ==================
 
 # Include routers
+app.include_router(auth_router)
+app.include_router(users_router)
+app.include_router(conversations_router)
+app.include_router(progress_router)
 app.include_router(analysis_router)
 app.include_router(feedback_router)
 app.include_router(content_router)
@@ -180,42 +197,126 @@ async def root():
 @limiter.limit("10/minute")
 async def health_check(request: Request):
     """
-    Health check endpoint.
-    
-    Returns system health status.
+    Enhanced health check endpoint.
+
+    Returns detailed system health status including:
+    - Database connectivity
+    - Azure OpenAI availability (actual API call)
+    - Azure Search availability (actual search call)
+    - Circuit breaker states
+    - Response times
     """
+    import time
+    import asyncio
+
     settings = get_settings()
-    
-    services = {
-        "database": "unknown",
-        "azure_openai": "unknown",
-        "azure_search": "unknown"
-    }
-    
-    # Check database
+
+    services = {}
+    response_times = {}
+
+    # 1. Check Database
+    start = time.time()
     try:
         from src.database.db import get_session
+        from sqlalchemy import text
         db = get_session()
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         db.close()
         services["database"] = "healthy"
-    except Exception:
-        services["database"] = "unhealthy"
-    
-    # Check Azure OpenAI (just config, not actual call)
+        response_times["database_ms"] = int((time.time() - start) * 1000)
+    except Exception as e:
+        services["database"] = f"unhealthy: {str(e)[:50]}"
+        response_times["database_ms"] = -1
+
+    # 2. Check Azure OpenAI (actual lightweight call)
+    start = time.time()
     if settings.azure_openai_endpoint and settings.azure_openai_api_key:
-        services["azure_openai"] = "configured"
+        try:
+            from openai import AsyncAzureOpenAI
+
+            client = AsyncAzureOpenAI(
+                azure_endpoint=settings.azure_openai_endpoint,
+                api_key=settings.azure_openai_api_key,
+                api_version=settings.azure_openai_api_version
+            )
+
+            # Minimal call - just list deployments with timeout
+            await asyncio.wait_for(
+                client.models.list(),
+                timeout=5.0
+            )
+            services["azure_openai"] = "healthy"
+            response_times["azure_openai_ms"] = int((time.time() - start) * 1000)
+        except asyncio.TimeoutError:
+            services["azure_openai"] = "timeout"
+            response_times["azure_openai_ms"] = 5000
+        except Exception as e:
+            services["azure_openai"] = f"unhealthy: {str(e)[:50]}"
+            response_times["azure_openai_ms"] = -1
     else:
         services["azure_openai"] = "not_configured"
-    
-    # Check Azure Search
+        response_times["azure_openai_ms"] = -1
+
+    # 3. Check Azure Search (actual search call)
+    start = time.time()
     if settings.azure_search_endpoint and settings.azure_search_api_key:
-        services["azure_search"] = "configured"
+        try:
+            from config.azure_config import get_search_client
+
+            client = get_search_client(settings.azure_search_index_kazanim)
+
+            # Minimal search with timeout
+            results = await asyncio.wait_for(
+                asyncio.to_thread(
+                    lambda: list(client.search(search_text="test", top=1))
+                ),
+                timeout=5.0
+            )
+            services["azure_search"] = "healthy"
+            response_times["azure_search_ms"] = int((time.time() - start) * 1000)
+        except asyncio.TimeoutError:
+            services["azure_search"] = "timeout"
+            response_times["azure_search_ms"] = 5000
+        except Exception as e:
+            services["azure_search"] = f"unhealthy: {str(e)[:50]}"
+            response_times["azure_search_ms"] = -1
     else:
         services["azure_search"] = "not_configured"
-    
+        response_times["azure_search_ms"] = -1
+
+    # 4. Check Circuit Breaker States
+    try:
+        from src.utils.resilience import get_all_circuit_states
+        circuit_states = get_all_circuit_states()
+        services["circuit_breakers"] = {
+            name: state["state"]
+            for name, state in circuit_states.items()
+        }
+    except Exception:
+        services["circuit_breakers"] = {}
+
+    # Determine overall status
+    core_services = ["database", "azure_openai", "azure_search"]
+    all_healthy = all(
+        services.get(svc, "").startswith("healthy") or services.get(svc, "") == "not_configured"
+        for svc in core_services
+    )
+
+    # Check if any circuit breaker is open
+    any_circuit_open = any(
+        state == "open"
+        for state in services.get("circuit_breakers", {}).values()
+    )
+
+    if any_circuit_open:
+        status = "degraded"
+    elif all_healthy:
+        status = "healthy"
+    else:
+        status = "degraded"
+
     return HealthResponse(
-        status="healthy",
+        status=status,
         version="1.0.0",
         services=services
     )

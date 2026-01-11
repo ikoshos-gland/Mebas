@@ -4,7 +4,7 @@ Question analysis endpoints
 """
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 import time
 import json
 
@@ -18,6 +18,8 @@ from api.models import (
     ChatResponse
 )
 from src.agents import MebRagGraph, get_effective_grade
+from api.auth.deps import get_optional_user
+from src.database.models import User
 
 
 router = APIRouter(prefix="/analyze", tags=["Analysis"])
@@ -35,24 +37,30 @@ def get_graph() -> MebRagGraph:
 
 
 @router.post("/image", response_model=AnalysisResponse)
-async def analyze_image(request: AnalyzeImageRequest):
+async def analyze_image(
+    request: AnalyzeImageRequest,
+    current_user: Optional[User] = Depends(get_optional_user)
+):
     """
     Analyze a question image.
-    
+
     Upload a base64 encoded image of a student question
     and receive matched kazanımlar and study suggestions.
+
+    If authenticated, high-confidence kazanımlar will be auto-tracked.
     """
     start_time = time.time()
-    
+
     try:
         graph = get_graph()
-        
-        # Run analysis
+
+        # Run analysis with optional user_id for progress tracking
         result = await graph.analyze(
             question_image_base64=request.image_base64,
             user_grade=request.grade,
             user_subject=request.subject,
-            is_exam_mode=request.is_exam_mode
+            is_exam_mode=request.is_exam_mode,
+            user_id=current_user.id if current_user else None
         )
         
         processing_time = int((time.time() - start_time) * 1000)
@@ -128,23 +136,29 @@ async def analyze_image(request: AnalyzeImageRequest):
 
 
 @router.post("/text", response_model=AnalysisResponse)
-async def analyze_text(request: AnalyzeTextRequest):
+async def analyze_text(
+    request: AnalyzeTextRequest,
+    current_user: Optional[User] = Depends(get_optional_user)
+):
     """
     Analyze a text question.
-    
+
     Submit a question text and receive matched kazanımlar
     and study suggestions.
+
+    If authenticated, high-confidence kazanımlar will be auto-tracked.
     """
     start_time = time.time()
-    
+
     try:
         graph = get_graph()
-        
+
         result = await graph.analyze(
             question_text=request.question_text,
             user_grade=request.grade,
             user_subject=request.subject,
-            is_exam_mode=request.is_exam_mode
+            is_exam_mode=request.is_exam_mode,
+            user_id=current_user.id if current_user else None
         )
         
         processing_time = int((time.time() - start_time) * 1000)
@@ -344,39 +358,47 @@ async def analyze_stream(request: AnalyzeTextRequest):
 # ================== UNIFIED CHAT ENDPOINT ==================
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(
+    request: ChatRequest,
+    current_user: Optional[User] = Depends(get_optional_user)
+):
     """
     Unified chat endpoint with supervisor routing.
-    
+
     - If image is present: Full RAG analysis
     - If text only with prior context: Follow-up chat using stored context
+
+    If authenticated, high-confidence kazanımlar will be auto-tracked.
     """
     import uuid
     start_time = time.time()
-    
+
     # Get or create session
     from src.rag.conversation_context import get_conversation_manager
     from src.rag.supervisor import Supervisor, RouteDecision, FollowUpChatbot
-    
+
     manager = get_conversation_manager()
     supervisor = Supervisor()
-    
+
     session_id = request.session_id or str(uuid.uuid4())
     context = manager.get_context(session_id)
     has_context = context is not None
     has_image = request.image_base64 is not None
-    
+
+    # Get user_id for progress tracking
+    user_id = current_user.id if current_user else None
+
     # Route decision
     decision = supervisor.decide(
         has_image=has_image,
         has_context=has_context,
         user_message=request.message
     )
-    
+
     if decision.decision == RouteDecision.NEW_IMAGE_ANALYSIS:
         # Full RAG pipeline
         graph = get_graph()
-        
+
         try:
             if has_image:
                 # Image analysis
@@ -384,7 +406,9 @@ async def chat(request: ChatRequest):
                     question_image_base64=request.image_base64,
                     user_grade=request.grade,
                     user_subject=request.subject,
-                    is_exam_mode=request.is_exam_mode
+                    is_exam_mode=request.is_exam_mode,
+                    user_id=user_id,
+                    conversation_id=session_id
                 )
             else:
                 # Text analysis
@@ -392,7 +416,9 @@ async def chat(request: ChatRequest):
                     question_text=request.message or "",
                     user_grade=request.grade,
                     user_subject=request.subject,
-                    is_exam_mode=request.is_exam_mode
+                    is_exam_mode=request.is_exam_mode,
+                    user_id=user_id,
+                    conversation_id=session_id
                 )
             
             question_text = result.get("question_text", request.message or "")

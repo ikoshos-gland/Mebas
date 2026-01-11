@@ -16,7 +16,9 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgresql://meb:meb123@postgres:5432/mebrag
-      - DEBUG=false
+      - DEBUG=true
+      - PYTHONUNBUFFERED=1
+      - PYTHONFAULTHANDLER=1
     volumes:
       - ./data:/app/data
       - ./output:/app/output
@@ -35,22 +37,27 @@ services:
       retries: 3
       start_period: 10s
 
-  # ===== Frontend (Static Site) =====
+  # ===== Frontend (React + Vite) =====
   frontend:
     build:
-      context: ./frontend
+      context: ./frontend-new
       dockerfile: Dockerfile
+      # VITE_API_URL not set = uses /api proxy (see nginx.conf)
     container_name: meb-rag-frontend
     ports:
       - "3001:80"
-    volumes:
-      - ./frontend/website.html:/usr/share/nginx/html/index.html
     depends_on:
       api:
         condition: service_healthy
     restart: unless-stopped
     networks:
       - default
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   # ===== PostgreSQL Database =====
   postgres:

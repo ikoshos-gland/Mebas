@@ -24,6 +24,12 @@ class BloomLevel(str, Enum):
     CREATE = "yaratma"
 
 
+class MatchType(str, Enum):
+    """Type of kazanım match"""
+    PRIMARY = "primary"
+    ALTERNATIVE = "alternative"
+
+
 class MatchedKazanim(BaseModel):
     """A matched kazanım from retrieval"""
     kazanim_code: str = Field(..., description="Kazanım kodu (örn: M.5.1.2.3)")
@@ -32,6 +38,7 @@ class MatchedKazanim(BaseModel):
     match_reason: str = Field(..., description="Neden bu kazanım eşleşti")
     related_topics: List[str] = Field(default_factory=list, description="İlgili konular")
     bloom_level: Optional[BloomLevel] = Field(None, description="Bloom taksonomisi")
+    match_type: MatchType = Field(MatchType.PRIMARY, description="Eşleşme türü (ana veya alternatif)")
 
 
 class PrerequisiteGap(BaseModel):
@@ -43,11 +50,14 @@ class PrerequisiteGap(BaseModel):
 
 
 class TextbookReference(BaseModel):
-    """Reference to textbook content"""
-    chapter_title: str = Field(..., description="Bölüm başlığı")
-    page_range: str = Field(..., description="Sayfa aralığı")
+    """Reference to textbook content with full hierarchy"""
+    textbook_name: str = Field(..., description="Kitap adı (örn: Biyoloji 9)")
+    chapter_title: str = Field(..., description="Bölüm/Ünite başlığı")
+    page_range: str = Field(..., description="Sayfa aralığı (örn: 45-47)")
     section_title: Optional[str] = Field(None, description="Alt bölüm başlığı")
+    content_preview: Optional[str] = Field(None, description="İçerik önizlemesi (ilk 200 karakter)")
     relevance: str = Field(..., description="Bu referansın soru ile ilişkisi")
+    full_hierarchy: str = Field(..., description="Tam hiyerarşi: Kitap > Ünite > Konu > Sayfa")
 
 
 class ImageReference(BaseModel):
@@ -63,6 +73,57 @@ class SolutionStep(BaseModel):
     step_number: int = Field(..., description="Adım numarası")
     description: str = Field(..., description="Bu adımda ne yapıldığı")
     result: Optional[str] = Field(None, description="Bu adımın sonucu (varsa)")
+
+
+class RelationshipType(str, Enum):
+    """Types of relationships between kazanımlar"""
+    PREREQUISITE = "prerequisite"  # Biri diğerinin ön koşulu
+    PARALLEL = "parallel"  # Aynı anda öğrenilebilir
+    EXTENSION = "extension"  # Biri diğerinin genişlemesi
+    APPLICATION = "application"  # Biri diğerinin pratik uygulaması
+
+
+class LearningPathItem(BaseModel):
+    """A step in the learning path"""
+    kazanim_code: str = Field(..., description="Kazanım kodu")
+    kazanim_title: str = Field(..., description="Kazanım başlığı")
+    order: int = Field(..., ge=1, description="Öğrenme sırası (1 = ilk öğrenilecek)")
+    reason: str = Field(..., description="Neden bu sırada öğrenmeli")
+    estimated_hours: Optional[float] = Field(None, description="Tahmini çalışma süresi (saat)")
+
+
+class InterdisciplinarySynthesis(BaseModel):
+    """Synthesis of related kazanımlar with learning path suggestions"""
+    related_kazanimlar: List[str] = Field(
+        default_factory=list,
+        description="İlişkili kazanım kodları listesi"
+    )
+    relationship_type: RelationshipType = Field(
+        ...,
+        description="İlişki türü: prerequisite, parallel, extension, application"
+    )
+    synthesis_summary: str = Field(
+        ...,
+        description="Kazanımlar arası ilişki özeti ve sentez"
+    )
+    key_concepts: List[str] = Field(
+        default_factory=list,
+        description="Ortak kilit kavramlar"
+    )
+    learning_path: List[LearningPathItem] = Field(
+        default_factory=list,
+        description="Önerilen öğrenme sırası"
+    )
+    study_tips: List[str] = Field(
+        default_factory=list,
+        description="Çalışma önerileri"
+    )
+    confidence: float = Field(
+        0.0,
+        ge=0.0,
+        le=1.0,
+        description="Sentez güven skoru"
+    )
 
 
 class AnalysisOutput(BaseModel):
@@ -128,7 +189,13 @@ class AnalysisOutput(BaseModel):
         default_factory=list,
         description="Çalışma önerileri"
     )
-    
+
+    # Interdisciplinary synthesis (learning path suggestions)
+    interdisciplinary_synthesis: Optional[InterdisciplinarySynthesis] = Field(
+        None,
+        description="İlişkili kazanımlar sentezi ve öğrenme yolu önerisi"
+    )
+
     # Confidence
     confidence: float = Field(
         0.0,

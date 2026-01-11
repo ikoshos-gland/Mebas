@@ -90,14 +90,39 @@ class ImageRetriever:
         self,
         description: str,
         image_type: Optional[str] = None,
+        grade: Optional[int] = None,
+        subject: Optional[str] = None,
+        is_exam_mode: bool = False,
         top_k: int = 5
     ) -> List[Dict[str, Any]]:
-        """Async version of search_by_description"""
+        """
+        Async version of search_by_description with grade/subject filtering.
+
+        CRITICAL: Grade/subject filters ensure pedagogical correctness.
+        """
         import asyncio
-        
+
         query_embedding = await embed_text_async(description)
-        filter_str = f"image_type eq '{image_type}'" if image_type else None
-        
+
+        # Build filter - CRITICAL for pedagogical correctness
+        filter_parts = []
+
+        if image_type:
+            filter_parts.append(f"image_type eq '{image_type}'")
+
+        if subject:
+            filter_parts.append(f"subject eq '{subject}'")
+
+        if grade:
+            if is_exam_mode:
+                # YKS Mode: Include images from student's grade and below
+                filter_parts.append(f"grade le {grade}")
+            else:
+                # School Mode: ONLY student's exact grade level
+                filter_parts.append(f"grade eq {grade}")
+
+        filter_str = " and ".join(filter_parts) if filter_parts else None
+
         results = await asyncio.to_thread(
             self.search_client.search,
             search_text=description,
@@ -109,6 +134,8 @@ class ImageRetriever:
                 )
             ],
             filter=filter_str,
+            query_type="semantic",  # Enable semantic reranking
+            semantic_configuration_name="semantic-config",
             top=top_k,
             select=[
                 "id",
@@ -119,10 +146,12 @@ class ImageRetriever:
                 "hierarchy_path",
                 "image_path",
                 "width",
-                "height"
+                "height",
+                "grade",
+                "subject"
             ]
         )
-        
+
         return [
             {
                 "image_id": r.get("id"),
@@ -133,6 +162,8 @@ class ImageRetriever:
                 "hierarchy_path": r.get("hierarchy_path"),
                 "image_path": r.get("image_path"),
                 "dimensions": f"{r.get('width', 0)}x{r.get('height', 0)}",
+                "grade": r.get("grade", 0),
+                "subject": r.get("subject", ""),
                 "score": r.get("@search.score", 0)
             }
             for r in results

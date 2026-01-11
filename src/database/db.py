@@ -5,26 +5,54 @@ Database Engine, Session Management, and Initialization
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from contextlib import contextmanager
-from typing import Generator
+from typing import Generator, Optional
 
 from config.settings import get_settings
 from src.database.models import Base
+
+
+def _create_engine(database_url: str, debug: bool = False):
+    """Create a SQLAlchemy engine with the given URL."""
+    return create_engine(
+        database_url,
+        echo=debug,
+        pool_pre_ping=True,  # Check connection health before use
+        # SQLite specific settings
+        connect_args={"check_same_thread": False} if "sqlite" in database_url else {}
+    )
 
 
 # Get settings
 settings = get_settings()
 
 # Create engine based on database URL
-engine = create_engine(
-    settings.database_url,
-    echo=settings.debug,
-    pool_pre_ping=True,  # Check connection health before use
-    # SQLite specific settings
-    connect_args={"check_same_thread": False} if "sqlite" in settings.database_url else {}
-)
+engine = _create_engine(settings.database_url, settings.debug)
 
 # Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+def reinitialize_engine(database_url: Optional[str] = None) -> None:
+    """
+    Reinitialize the database engine with a new URL.
+    Useful for testing with different databases.
+
+    Args:
+        database_url: New database URL. If None, uses settings.
+    """
+    global engine, SessionLocal
+
+    if database_url is None:
+        # Clear settings cache and reload
+        get_settings.cache_clear()
+        new_settings = get_settings()
+        database_url = new_settings.database_url
+        debug = new_settings.debug
+    else:
+        debug = False
+
+    engine = _create_engine(database_url, debug)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def init_db() -> None:

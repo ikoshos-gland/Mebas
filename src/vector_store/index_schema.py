@@ -71,6 +71,13 @@ def create_question_index_schema(index_name: str = "meb-sentetik-sorular-index")
                 type=SearchFieldDataType.String,
                 searchable=True
             ),
+            # Parent kazanim title - provides context for sub-items
+            SearchField(
+                name="kazanim_title",
+                type=SearchFieldDataType.String,
+                searchable=True,
+                analyzer_name="tr.microsoft"
+            ),
             # Filters for pedagogical correctness - CRITICAL!
             SearchField(
                 name="grade",
@@ -126,6 +133,7 @@ def create_question_index_schema(index_name: str = "meb-sentetik-sorular-index")
                     prioritized_fields=SemanticPrioritizedFields(
                         title_field=SemanticField(field_name="question_text"),
                         content_fields=[
+                            SemanticField(field_name="kazanim_title"),
                             SemanticField(field_name="parent_kazanim_desc")
                         ]
                     )
@@ -138,7 +146,7 @@ def create_question_index_schema(index_name: str = "meb-sentetik-sorular-index")
 def create_image_index_schema(index_name: str = "meb-images-index") -> SearchIndex:
     """
     Create index schema for textbook images.
-    
+
     Images are searchable by:
     - Caption text (GPT-4o generated)
     - Image type (diagram, graph, photo, etc.)
@@ -201,6 +209,24 @@ def create_image_index_schema(index_name: str = "meb-images-index") -> SearchInd
                 name="height",
                 type=SearchFieldDataType.Int32
             ),
+            # Grade/Subject for filtering - CRITICAL for pedagogical correctness
+            SearchField(
+                name="grade",
+                type=SearchFieldDataType.Int32,
+                filterable=True,
+                facetable=True
+            ),
+            SearchField(
+                name="subject",
+                type=SearchFieldDataType.String,
+                filterable=True,
+                facetable=True
+            ),
+            SearchField(
+                name="textbook_id",
+                type=SearchFieldDataType.Int32,
+                filterable=True
+            ),
             # Vector embedding of caption
             SearchField(
                 name="embedding",
@@ -225,6 +251,139 @@ def create_image_index_schema(index_name: str = "meb-images-index") -> SearchInd
                 VectorSearchProfile(
                     name="image-profile",
                     algorithm_configuration_name="hnsw-algo"
+                )
+            ]
+        ),
+        # Semantic search for improved image retrieval
+        semantic_search=SemanticSearch(
+            configurations=[
+                SemanticConfiguration(
+                    name="semantic-config",
+                    prioritized_fields=SemanticPrioritizedFields(
+                        title_field=SemanticField(field_name="caption"),
+                        content_fields=[
+                            SemanticField(field_name="related_text"),
+                            SemanticField(field_name="hierarchy_path")
+                        ]
+                    )
+                )
+            ]
+        )
+    )
+
+
+def create_kazanim_index_schema(index_name: str = "meb-kazanimlar-index") -> SearchIndex:
+    """
+    Create index schema for MEB kazanımları (learning objectives).
+
+    This is the PRIMARY index for curriculum alignment.
+    Kazanımlar are the official MEB learning objectives that define
+    what students should learn at each grade level.
+
+    Features:
+    - Turkish analyzer for keyword search
+    - Vector search with HNSW algorithm
+    - Semantic reranker for improved accuracy
+    - Grade/subject/semester filters for curriculum alignment
+    """
+    return SearchIndex(
+        name=index_name,
+        fields=[
+            # Key field
+            SearchField(
+                name="id",
+                type=SearchFieldDataType.String,
+                key=True
+            ),
+            # Kazanım code - e.g., "BİY.9.1.1.a"
+            SearchField(
+                name="code",
+                type=SearchFieldDataType.String,
+                searchable=True,
+                filterable=True,
+                sortable=True
+            ),
+            # Parent code for sub-items - e.g., "BİY.9.1.1" for "BİY.9.1.1.a"
+            SearchField(
+                name="parent_code",
+                type=SearchFieldDataType.String,
+                filterable=True,
+                searchable=True
+            ),
+            # Kazanım description - the actual learning objective text
+            SearchField(
+                name="description",
+                type=SearchFieldDataType.String,
+                searchable=True,
+                analyzer_name="tr.microsoft"
+            ),
+            # Parent kazanım title (for sub-items)
+            SearchField(
+                name="title",
+                type=SearchFieldDataType.String,
+                searchable=True,
+                analyzer_name="tr.microsoft"
+            ),
+            # Grade level - CRITICAL for pedagogical correctness
+            SearchField(
+                name="grade",
+                type=SearchFieldDataType.Int32,
+                filterable=True,
+                facetable=True,
+                sortable=True
+            ),
+            # Subject code - e.g., "BİY", "M", "F"
+            SearchField(
+                name="subject",
+                type=SearchFieldDataType.String,
+                filterable=True,
+                facetable=True
+            ),
+            # Semester - 1 or 2 (dönem)
+            SearchField(
+                name="semester",
+                type=SearchFieldDataType.Int32,
+                filterable=True,
+                facetable=True
+            ),
+            # Vector embedding for semantic search
+            SearchField(
+                name="embedding",
+                type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
+                vector_search_dimensions=3072,
+                vector_search_profile_name="kazanim-profile"
+            )
+        ],
+        vector_search=VectorSearch(
+            algorithms=[
+                HnswAlgorithmConfiguration(
+                    name="hnsw-algo",
+                    parameters={
+                        "m": 4,
+                        "efConstruction": 400,
+                        "efSearch": 500,
+                        "metric": "cosine"
+                    }
+                )
+            ],
+            profiles=[
+                VectorSearchProfile(
+                    name="kazanim-profile",
+                    algorithm_configuration_name="hnsw-algo"
+                )
+            ]
+        ),
+        semantic_search=SemanticSearch(
+            configurations=[
+                SemanticConfiguration(
+                    name="semantic-config",
+                    prioritized_fields=SemanticPrioritizedFields(
+                        title_field=SemanticField(field_name="title"),
+                        content_fields=[
+                            SemanticField(field_name="description"),
+                            SemanticField(field_name="code")
+                        ]
+                    )
                 )
             ]
         )
@@ -280,6 +439,13 @@ def create_textbook_chunk_index_schema(index_name: str = "meb-kitaplar-index") -
                 filterable=True
             ),
             SearchField(
+                name="textbook_name",
+                type=SearchFieldDataType.String,
+                searchable=True,
+                filterable=True,
+                analyzer_name="tr.microsoft"
+            ),
+            SearchField(
                 name="chapter_id",
                 type=SearchFieldDataType.Int32,
                 filterable=True
@@ -293,6 +459,13 @@ def create_textbook_chunk_index_schema(index_name: str = "meb-kitaplar-index") -
             SearchField(
                 name="subject",
                 type=SearchFieldDataType.String,
+                filterable=True,
+                facetable=True
+            ),
+            # Semester - 1 or 2 (dönem) - critical for curriculum alignment
+            SearchField(
+                name="semester",
+                type=SearchFieldDataType.Int32,
                 filterable=True,
                 facetable=True
             ),

@@ -13,7 +13,8 @@ from src.vector_store.question_generator import (
 from src.vector_store.index_schema import (
     create_question_index_schema,
     create_image_index_schema,
-    create_textbook_chunk_index_schema
+    create_textbook_chunk_index_schema,
+    create_kazanim_index_schema
 )
 from src.vector_store.parent_retriever import ParentDocumentRetriever
 from src.vector_store.image_retriever import ImageRetriever
@@ -33,6 +34,7 @@ __all__ = [
     "create_question_index_schema",
     "create_image_index_schema",
     "create_textbook_chunk_index_schema",
+    "create_kazanim_index_schema",
     # Retrievers
     "ParentDocumentRetriever",
     "ImageRetriever",

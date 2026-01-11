@@ -5,10 +5,13 @@ Conditional routing for the state machine
 from typing import Literal
 
 from src.agents.state import QuestionAnalysisState
+from config.settings import get_settings
 
+# Get settings for retry configuration
+settings = get_settings()
 
-# Maximum retries for retrieval
-MAX_RETRIEVAL_RETRIES = 3
+# Export constant for backward compatibility
+MAX_RETRIEVAL_RETRIES = settings.retrieval_max_retries
 
 
 def check_analysis_success(
@@ -55,11 +58,11 @@ def check_retrieval_success(
         return "continue"
     
     # Check if we should retry
-    if status == "needs_retry" and retry_count < MAX_RETRIEVAL_RETRIES:
+    if status == "needs_retry" and retry_count < settings.retrieval_max_retries:
         return "retry"
     
     # Max retries exceeded or error
-    if retry_count >= MAX_RETRIEVAL_RETRIES:
+    if retry_count >= settings.retrieval_max_retries:
         return "error"
     
     # If we have results, continue
@@ -67,7 +70,7 @@ def check_retrieval_success(
         return "continue"
     
     # No results, try to retry
-    if retry_count < MAX_RETRIEVAL_RETRIES:
+    if retry_count < settings.retrieval_max_retries:
         return "retry"
     
     return "error"

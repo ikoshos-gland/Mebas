@@ -14,8 +14,15 @@ import sys
 import os
 import asyncio
 import glob
+import logging
 from pathlib import Path
 from dataclasses import asdict
+
+# Configure logging to show retry attempts
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -117,67 +124,121 @@ async def process_kazanim_pdf(
     #         b) sub-item
     #         BİY.9.1.2. Next kazanim...
     print("   └─ Parsing kazanim codes...")
-    
-    # Pattern: Capture code and everything until next code or end
-    # Lookahead ensures we stop before the next kazanim code
-    kazanim_pattern = r"([A-ZİĞÜŞÖÇ]+\.\d+(?:\.\d+)+)\.?\s+([\s\S]+?)(?=\n[A-ZİĞÜŞÖÇ]+\.\d+(?:\.\d+)+\.|$)"
-    matches = re.findall(kazanim_pattern, full_text)
-    
-    print(f"   └─ Found {len(matches)} potential kazanim entries")
-    
-    if not matches:
+
+    # NEW APPROACH: Parse sub-items (a, b, c, ç, d) separately for granular indexing
+    # Each sub-item is a distinct, measurable learning outcome
+
+    # Step 1: Find all main kazanım codes and their blocks
+    # Pattern captures: CODE + everything until next CODE
+    kazanim_block_pattern = r"([A-ZİĞÜŞÖÇ]+\.\d+(?:\.\d+)+)\.?\s+([\s\S]+?)(?=\n[A-ZİĞÜŞÖÇ]+\.\d+(?:\.\d+)+\.|$)"
+    blocks = re.findall(kazanim_block_pattern, full_text)
+
+    print(f"   └─ Found {len(blocks)} kazanim blocks")
+
+    if not blocks:
         print("   ⚠️ No kazanim codes found! check regex or pdf format.")
         return
 
-    # 4. Generate Questions for each Kazanim (PARALLEL)
-    print(f"   └─ Generating synthetic questions (GPT-4o) - {len(matches)} kazanim in parallel...")
-    generator = SyntheticQuestionGenerator()
-    
-    # Build kazanim dicts first
+    # Step 2: Parse each block to extract sub-items (a, b, c, ç, d)
+    # Sub-item pattern: letter followed by ) and text until next sub-item or double newline or new kazanim
+    sub_item_pattern = r"([a-zçğıöşü])\)\s*(.+?)(?=\n[a-zçğıöşü]\)|\n\n|\n[A-ZİĞÜŞÖÇ]+\.\d|$)"
+
     kazanim_dicts = []
-    for code, description in matches:
-        description = description.strip().replace("\n", " ")
+    total_sub_items = 0
+
+    for code, block_content in blocks:
+        # Extract the title (first line before any sub-items)
+        title_match = re.match(r"^([^\n]+?)(?=\n[a-zçğıöşü]\)|$)", block_content.strip())
+        title = title_match.group(1).strip() if title_match else block_content.split('\n')[0].strip()
+
+        # Parse code parts
         parts = code.split('.')
         grade = 0
         if len(parts) > 1 and parts[1].isdigit():
             grade = int(parts[1])
-            
-        kazanim_dicts.append({
-            "id": str(uuid.uuid4()),
-            "code": code,
-            "description": description,
-            "grade": grade,
-            "subject": parts[0],  # 'BİY', 'M', etc.
-            "semester": semester
-        })
-    
+        subject = parts[0]  # 'BİY', 'M', etc.
+
+        # Find all sub-items in this block (DOTALL allows . to match newlines)
+        sub_items = re.findall(sub_item_pattern, block_content, re.DOTALL)
+
+        if sub_items:
+            # Index each sub-item separately with parent code reference
+            for letter, content in sub_items:
+                content = content.strip().replace("\n", " ").replace("  ", " ")
+                if len(content) < 10:  # Skip empty/invalid sub-items
+                    continue
+
+                sub_code = f"{code}.{letter}"  # e.g., BİY.9.1.1.a
+                total_sub_items += 1
+
+                kazanim_dicts.append({
+                    "id": str(uuid.uuid4()),
+                    "code": sub_code,
+                    "parent_code": code,
+                    "description": content,
+                    "title": title,  # Parent kazanım title for context
+                    "grade": grade,
+                    "subject": subject,
+                    "semester": semester
+                })
+        else:
+            # No sub-items found, index the main kazanım title
+            description = title if len(title) < 500 else title[:500]
+            kazanim_dicts.append({
+                "id": str(uuid.uuid4()),
+                "code": code,
+                "parent_code": code,
+                "description": description,
+                "title": title,
+                "grade": grade,
+                "subject": subject,
+                "semester": semester
+            })
+
+    print(f"   └─ Parsed {total_sub_items} sub-items from {len(blocks)} kazanim blocks")
+    print(f"   └─ Total kazanımlar to index: {len(kazanim_dicts)}")
+
+    # Debug: Show sample parsed items
+    if kazanim_dicts:
+        sample = kazanim_dicts[0]
+        print(f"   └─ Sample: {sample['code']} - {sample['description'][:80]}...")
+
+    # 4. INDEX KAZANIMLAR TO PRIMARY INDEX (This is the main curriculum data!)
+    print("   └─ Indexing kazanımlar to PRIMARY index (meb-kazanimlar-index)...")
+    pipeline.index_kazanimlar_raw(kazanim_dicts)
+
+    # 5. Generate Synthetic Questions for each Kazanim (PARALLEL)
+    # These are used for example question generation, NOT for curriculum retrieval
+    print(f"   └─ Generating synthetic questions (GPT-4o) - {len(kazanim_dicts)} kazanımlar...")
+    generator = SyntheticQuestionGenerator()
+
     # Parallel generation with semaphore to respect rate limits
     PARALLEL_LIMIT = 5  # Process 5 at a time to avoid rate limits
     semaphore = asyncio.Semaphore(PARALLEL_LIMIT)
-    
+
     async def generate_with_limit(kazanim):
         async with semaphore:
-            print(f"      └─ Generating for {kazanim['code']}...")
+            print(f"      └─ Generating questions for {kazanim['code']}...")
             return await generator.generate_for_kazanim_async(kazanim, count=5)
-    
+
     # Run all in parallel
     tasks = [generate_with_limit(k) for k in kazanim_dicts]
     results = await asyncio.gather(*tasks)
-    
+
     # Flatten results
     all_questions = []
     for qs in results:
         all_questions.extend(qs)
 
-    print(f"   └─ Generated {len(all_questions)} total questions")
+    print(f"   └─ Generated {len(all_questions)} total synthetic questions")
 
-    # 5. Index Questions
+    # 6. Index Synthetic Questions (secondary index for example questions)
     if all_questions:
-        print("   └─ Indexing questions to Azure AI Search...")
-        
+        print("   └─ Indexing synthetic questions to meb-sentetik-sorular-index...")
+
         # Build lookup for kazanim metadata
         kazanim_lookup = {k["code"]: k for k in kazanim_dicts}
-        
+
         # Convert dataclass to dict for indexing
         q_dicts = []
         for q in all_questions:
@@ -194,8 +255,8 @@ async def process_kazanim_pdf(
                 "subject": kaz.get("subject", ""),
                 "semester": kaz.get("semester", 0)
             })
-            
-        pipeline.index_kazanimlar(q_dicts, generate_questions=False) # Skip internal generation, we already did it
+
+        pipeline.index_kazanimlar(q_dicts, generate_questions=False)  # Skip internal generation
 
     print(f"[OK] Completed Kazanim File: {pdf_path.name}")
 
@@ -221,10 +282,14 @@ async def process_single_pdf(
     metadata = parse_filename(pdf_path.name)
     print(f"   └─ Metadata: {metadata}")
 
-    # 2. Layout Analysis
-    print("   └─ Analyzing layout (Azure Document Intelligence)...")
+    # 2. Layout Analysis with retry support for large PDFs
+    file_size_mb = len(pdf_bytes) / (1024 * 1024)
+    print(f"   └─ Analyzing layout (Azure Document Intelligence)... [{file_size_mb:.1f} MB]")
+    if file_size_mb > 50:
+        print(f"   └─ Large file detected - may take several minutes with auto-retry on timeout")
+
     analyzer = LayoutAnalyzer()
-    result = await analyzer.analyze_document(doc_client, pdf_bytes)
+    result = await analyzer.analyze_document(doc_client, pdf_bytes, max_retries=3, initial_delay=30.0)
     elements = analyzer.classify_elements(result)
     print(f"   └─ Found {len(elements)} layout elements")
     if result.figures:
@@ -276,9 +341,10 @@ async def process_single_pdf(
             "page_range": f"{chunk.page_range[0]}-{chunk.page_range[1]}",
             "is_sidebar": chunk.is_sidebar_content,
             "textbook_id": metadata["textbook_id"],
+            "textbook_name": metadata["textbook_name"],  # Kitap adı (örn: biyoloji_9)
             "grade": metadata["grade"],
             "subject": metadata["subject"],
-            # Flatten metadata if needed or keep as extra field
+            "semester": metadata["semester"],  # CRITICAL: Include semester for curriculum alignment
         }
         chunk_dicts.append(c_dict)
 
@@ -313,12 +379,13 @@ async def process_single_pdf(
     print(f"[OK] Completed Textbook: {pdf_path.name}")
 
 
-async def main(process_mode: str = "all"):
+async def main(process_mode: str = "all", reset: str = None):
     """
     Main processing function.
-    
+
     Args:
-        process_mode: "all", "kazanim", or "kitap"
+        process_mode: "all", "kazanim", or "kitap" - determines which PDFs to process
+        reset: Index deletion mode - "all", "kazanim", "kitap", or None (no deletion)
     """
     print("="*60)
     print("MEB RAG - PDF Ingestion Pipeline")
@@ -327,6 +394,10 @@ async def main(process_mode: str = "all"):
     
     settings = get_settings()
     
+    # ... (Directories check omitted for brevity in replace, assume handled or no change needed to top part)
+    # Actually I need to keep the function body intact or be careful with replace range.
+    # I will target specific blocks.
+
     # Validate Directories
     pdf_dir = Path("data/pdfs")
     if not pdf_dir.exists():
@@ -340,14 +411,17 @@ async def main(process_mode: str = "all"):
 
     # Initialize Clients
     print("[INFO] Initializing Azure Clients...")
-    
-    # Document Intelligence Client
+
+    # Document Intelligence Client with extended timeouts for large PDFs
+    # Use retry_total and per_retry_timeout for robust handling of large files
+    from azure.core.pipeline.policies import RetryPolicy
+
     doc_client = DocumentIntelligenceClient(
         endpoint=settings.documentintelligence_endpoint,
         credential=AzureKeyCredential(settings.documentintelligence_api_key),
-        # Increase timeout for large PDF uploads (180MB+)
-        connection_timeout=300,  # 5 minutes connect
-        read_timeout=300         # 5 minutes read
+        retry_total=5,  # Total retry attempts
+        retry_backoff_factor=2,  # Exponential backoff
+        retry_backoff_max=120,  # Max 2 minutes between retries
     )
     
     # Azure OpenAI Client (for Vision)
@@ -360,6 +434,12 @@ async def main(process_mode: str = "all"):
 
     # Indexing Pipeline
     pipeline = IndexingPipeline()
+    
+    # RESET IF REQUESTED
+    if reset:
+        # Pass the reset mode (can be different from process_mode)
+        pipeline.delete_indexes(reset)
+        
     # Ensure indexes exist
     pipeline.create_all_indexes()
     
@@ -397,41 +477,91 @@ async def main(process_mode: str = "all"):
 
 if __name__ == "__main__":
     import argparse
-    
+
     parser = argparse.ArgumentParser(
         description="MEB RAG - PDF Processing and Indexing",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Örnekler:
-  python scripts/process_pdfs.py              # Tüm PDF'leri işle
-  python scripts/process_pdfs.py --kazanim    # Sadece kazanımları işle
-  python scripts/process_pdfs.py --kitap      # Sadece ders kitaplarını işle
+  python scripts/process_pdfs.py                    # Tüm PDF'leri işle
+  python scripts/process_pdfs.py --reset            # Önce tüm indexleri sil sonra işle
+  python scripts/process_pdfs.py -k -r              # Sadece kazanımları işle ve önce sil
+  python scripts/process_pdfs.py -t --reset-kitap   # Kitapları işle, sadece kitap indexini sil
+  python scripts/process_pdfs.py --reset-kitap      # Sadece kitap indexini sil (işlem yapmadan)
+  python scripts/process_pdfs.py --reset-kazanim    # Sadece kazanım indexini sil (işlem yapmadan)
         """
     )
-    
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
+
+    # Processing mode (what to process)
+    process_group = parser.add_mutually_exclusive_group()
+    process_group.add_argument(
         "--kazanim", "-k",
         action="store_true",
         help="Sadece kazanım PDF'lerini işle (data/pdfs/kazanimlar/)"
     )
-    group.add_argument(
+    process_group.add_argument(
         "--kitap", "-t",
-        action="store_true", 
+        action="store_true",
         help="Sadece ders kitaplarını işle (data/pdfs/ders_kitaplari/)"
     )
-    
+
+    # Reset options (what to delete)
+    reset_group = parser.add_mutually_exclusive_group()
+    reset_group.add_argument(
+        "--reset", "-r",
+        action="store_true",
+        help="Tüm indexleri SİL ve baştan oluştur."
+    )
+    reset_group.add_argument(
+        "--reset-kitap",
+        action="store_true",
+        help="Sadece kitap (chunks + images) indexlerini SİL."
+    )
+    reset_group.add_argument(
+        "--reset-kazanim",
+        action="store_true",
+        help="Sadece kazanım/soru indexini SİL."
+    )
+
+    parser.add_argument(
+        "--delete-only",
+        action="store_true",
+        help="Sadece index sil, PDF işleme yapma (--reset-* ile birlikte kullan)."
+    )
+
     args = parser.parse_args()
-    
-    # Determine mode
+
+    # Determine processing mode
     if args.kazanim:
         mode = "kazanim"
     elif args.kitap:
         mode = "kitap"
     else:
         mode = "all"
-    
+
+    # Determine reset mode
+    if args.reset:
+        reset_mode = mode  # Reset matches processing mode
+    elif args.reset_kitap:
+        reset_mode = "kitap"
+    elif args.reset_kazanim:
+        reset_mode = "kazanim"
+    else:
+        reset_mode = None
+
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    asyncio.run(main(mode))
+
+    # Handle delete-only mode
+    if args.delete_only:
+        if not reset_mode:
+            print("[ERROR] --delete-only requires a reset flag (--reset, --reset-kitap, or --reset-kazanim)")
+            sys.exit(1)
+        # Just delete indexes without processing
+        from src.vector_store.indexing_pipeline import IndexingPipeline
+        pipeline = IndexingPipeline()
+        pipeline.delete_indexes(reset_mode)
+        print("[DONE] Index deletion completed.")
+    else:
+        asyncio.run(main(mode, reset=reset_mode))
 

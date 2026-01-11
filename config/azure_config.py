@@ -15,8 +15,8 @@ def get_document_intelligence_client() -> DocumentIntelligenceClient:
     """Document Intelligence client instance"""
     settings = get_settings()
     return DocumentIntelligenceClient(
-        endpoint=settings.doc_intelligence_endpoint,
-        credential=AzureKeyCredential(settings.doc_intelligence_api_key)
+        endpoint=settings.documentintelligence_endpoint,
+        credential=AzureKeyCredential(settings.documentintelligence_api_key)
     )
 
 

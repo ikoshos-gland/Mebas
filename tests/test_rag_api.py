@@ -63,16 +63,20 @@ class TestResponseGenerator:
     def test_build_prompt(self):
         """Test prompt building"""
         from src.rag.response_generator import ResponseGenerator
-        
-        gen = ResponseGenerator.__new__(ResponseGenerator)
-        
+        from unittest.mock import MagicMock
+
+        # Create instance properly with mock LLM to avoid Azure connection
+        mock_llm = MagicMock()
+        mock_llm.with_structured_output = MagicMock(return_value=mock_llm)
+        gen = ResponseGenerator(llm=mock_llm)
+
         prompt = gen._build_prompt(
             question_text="Test soru",
             kazanimlar=[{"kazanim_code": "M.5.1.1.1", "kazanim_description": "Test"}],
             textbook_sections=[],
             topics=["matematik"]
         )
-        
+
         assert "Test soru" in prompt
         assert "M.5.1.1.1" in prompt
         print("✅ Build prompt test passed!")

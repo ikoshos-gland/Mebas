@@ -1,0 +1,159 @@
+/* Google Fonts - must be first */
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600&family=Inter:wght@200;300;400;500;600&family=JetBrains+Mono:wght@200;300;400&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* CSS Variables - Meba Design System */
+:root {
+  --c-paper: #FDFCF8;
+  --c-canvas: #E7E5E4;
+  --c-ink: #1C1917;
+  --c-sepia: #78350F;
+  --c-accent: #9A3412;
+}
+
+/* Base Styles */
+body {
+  background-color: var(--c-canvas);
+  color: var(--c-ink);
+  font-family: 'Inter', sans-serif;
+  margin: 0;
+  min-height: 100vh;
+}
+
+/* Selection Color */
+::selection {
+  background-color: rgba(120, 53, 15, 0.2);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(28, 25, 23, 0.15);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 53, 15, 0.5);
+}
+
+/* Glassmorphism Utilities */
+@layer components {
+  .glass-vellum {
+    background: rgba(253, 252, 248, 0.92);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.6);
+    box-shadow: 0 12px 32px -8px rgba(28, 25, 23, 0.08);
+  }
+
+  .glass-input {
+    background: rgba(253, 252, 248, 0.85);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(28, 25, 23, 0.05);
+    box-shadow: 0 -4px 20px -5px rgba(28, 25, 23, 0.05);
+  }
+
+  .card-surface {
+    background: #FDFCF8;
+    border: 1px solid rgba(28, 25, 23, 0.06);
+    box-shadow:
+      0 4px 6px -1px rgba(28, 25, 23, 0.02),
+      0 2px 4px -1px rgba(28, 25, 23, 0.02),
+      0 0 0 1px rgba(28, 25, 23, 0.02);
+  }
+
+  .grid-overlay {
+    background-size: 40px 40px;
+    background-image:
+      linear-gradient(to right, rgba(28, 25, 23, 0.02) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(28, 25, 23, 0.02) 1px, transparent 1px);
+    mask-image: radial-gradient(circle at center, black 40%, transparent 100%);
+  }
+
+  .scroll-mask {
+    mask-image: linear-gradient(to bottom, transparent 0%, black 5%, black 90%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 5%, black 90%, transparent 100%);
+  }
+
+  /* Button Variants */
+  .btn-primary {
+    @apply px-6 py-3 bg-ink text-paper rounded-full font-mono-custom text-xs uppercase tracking-wider
+           hover:bg-sepia transition-all shadow-lg shadow-black/5 hover:shadow-xl hover:shadow-sepia/10
+           active:scale-95;
+  }
+
+  .btn-secondary {
+    @apply px-6 py-3 bg-paper/40 border border-stone-300 rounded-full font-mono-custom text-xs uppercase tracking-wider
+           hover:bg-paper hover:border-ink/30 transition-all backdrop-blur-sm;
+  }
+
+  .btn-ghost {
+    @apply px-4 py-2 text-neutral-600 hover:text-ink hover:bg-stone-100 rounded-lg transition-colors
+           font-mono-custom text-xs uppercase tracking-wider;
+  }
+
+  /* Input Styles */
+  .input-field {
+    @apply w-full bg-paper border border-stone-200 text-ink text-sm font-sans p-3 rounded-xl
+           hover:border-ink/30 focus:outline-none focus:border-sepia focus:ring-1 focus:ring-sepia/20
+           transition-all placeholder:text-neutral-400;
+  }
+
+  /* Typography */
+  .heading-display {
+    @apply font-serif-custom text-4xl md:text-5xl lg:text-6xl font-medium tracking-tight text-ink;
+  }
+
+  .heading-section {
+    @apply font-serif-custom text-2xl md:text-3xl font-medium italic text-sepia;
+  }
+
+  .label-mono {
+    @apply font-mono-custom text-[10px] uppercase tracking-widest text-neutral-500;
+  }
+
+  .prose-meba {
+    @apply font-sans font-light leading-7 text-ink/90;
+  }
+}
+
+/* Toggle Switch */
+.custom-toggle:checked + div {
+  background-color: var(--c-ink);
+}
+
+.custom-toggle:checked + div span {
+  transform: translateX(100%);
+}
+
+/* Animation Delays */
+.animate-delay-100 {
+  animation-delay: 0.1s;
+}
+
+.animate-delay-200 {
+  animation-delay: 0.2s;
+}
+
+.animate-delay-300 {
+  animation-delay: 0.3s;
+}
+
+.animate-delay-400 {
+  animation-delay: 0.4s;
+}
+
+.animate-delay-500 {
+  animation-delay: 0.5s;
+}

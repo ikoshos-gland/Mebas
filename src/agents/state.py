@@ -63,22 +63,43 @@ class QuestionAnalysisState(TypedDict, total=False):
     # ===== RESPONSE =====
     # Generated response (Phase 7)
     response: Optional[dict]
-    
+
     # Prerequisite gaps found
     prerequisite_gaps: List[dict]
+
+    # Interdisciplinary synthesis (learning path suggestions)
+    interdisciplinary_synthesis: Optional[dict]
     
     # ===== CONTROL =====
     # Current retry count for retrieval
     retrieval_retry_count: int
-    
+
     # Error state
     error: Optional[str]
-    
+
     # Processing status
     status: str  # "processing", "success", "failed", "needs_retry"
-    
+
     # Analysis ID for tracking
     analysis_id: str
+
+    # ===== USER CONTEXT (Progress Tracking) =====
+    # User ID for progress tracking (from authenticated request)
+    user_id: Optional[int]
+
+    # Conversation ID for source tracking
+    conversation_id: Optional[str]
+
+    # ===== PROGRESS TRACKING RESULTS =====
+    # Kazanım codes that were auto-tracked (confidence >= 0.80)
+    tracked_kazanim_codes: List[str]
+
+    # ===== UNDERSTANDING DETECTION =====
+    # Chat history for understanding detection in follow-up
+    chat_history: List[dict]
+
+    # AI detection result for understanding
+    understanding_detection: Optional[dict]
 
 
 def get_effective_grade(state: QuestionAnalysisState) -> Optional[int]:
@@ -125,11 +146,13 @@ def create_initial_state(
     user_grade: Optional[int] = None,
     user_subject: Optional[str] = None,
     is_exam_mode: bool = False,
-    analysis_id: str = ""
+    analysis_id: str = "",
+    user_id: Optional[int] = None,
+    conversation_id: Optional[str] = None
 ) -> QuestionAnalysisState:
     """Create initial state with defaults"""
     import uuid
-    
+
     return {
         "question_text": question_text,
         "question_image_base64": question_image_base64,
@@ -146,8 +169,16 @@ def create_initial_state(
         "related_images": [],
         "response": None,
         "prerequisite_gaps": [],
+        "interdisciplinary_synthesis": None,
         "retrieval_retry_count": 0,
         "error": None,
         "status": "processing",
-        "analysis_id": analysis_id or str(uuid.uuid4())[:8]
+        "analysis_id": analysis_id or str(uuid.uuid4())[:8],
+        # Progress tracking
+        "user_id": user_id,
+        "conversation_id": conversation_id,
+        "tracked_kazanim_codes": [],
+        # Understanding detection
+        "chat_history": [],
+        "understanding_detection": None
     }

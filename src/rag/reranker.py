@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from langchain_openai import AzureChatOpenAI
 
 from config.settings import get_settings
+from src.utils.resilience import with_resilience, CircuitOpenError
 
 
 class RerankedItem(BaseModel):
@@ -67,27 +68,27 @@ Her kazanımı soruyla alakalılığına göre skorla (0.0-1.0)."""
         Args:
             llm: Optional pre-configured LLM. Creates default if not provided.
         """
+        self.settings = get_settings()
         if llm:
             self.llm = llm
         else:
-            settings = get_settings()
             self.llm = AzureChatOpenAI(
-                azure_endpoint=settings.azure_openai_endpoint,
-                api_key=settings.azure_openai_api_key,
-                api_version=settings.azure_openai_api_version,
-                azure_deployment=settings.azure_openai_chat_deployment,
-                temperature=0  # Deterministic scoring
+                azure_endpoint=self.settings.azure_openai_endpoint,
+                api_key=self.settings.azure_openai_api_key,
+                api_version=self.settings.azure_openai_api_version,
+                azure_deployment=self.settings.azure_openai_chat_deployment,
+                temperature=self.settings.llm_temperature_deterministic
             )
         
         # Create structured output chain
         self.structured_llm = self.llm.with_structured_output(RerankerOutput)
     
     async def rerank(
-        self, 
-        question: str, 
+        self,
+        question: str,
         kazanimlar: List[Dict[str, Any]],
-        top_k: int = 5,
-        score_blend_ratio: float = 0.5
+        top_k: Optional[int] = None,
+        score_blend_ratio: Optional[float] = None
     ) -> List[Dict[str, Any]]:
         """
         Rerank kazanımlar using LLM relevance scoring.
@@ -102,14 +103,20 @@ Her kazanımı soruyla alakalılığına göre skorla (0.0-1.0)."""
         Returns:
             Reranked list of kazanımlar with updated scores
         """
+        # Use settings defaults if not provided
+        if top_k is None:
+            top_k = self.settings.rag_kazanim_top_k
+        if score_blend_ratio is None:
+            score_blend_ratio = self.settings.reranker_score_blend_ratio
+
         if not kazanimlar:
             return []
-        
+
         if len(kazanimlar) == 1:
             return kazanimlar
-        
+
         # Limit input to avoid token limits
-        kazanimlar_to_rank = kazanimlar[:10]
+        kazanimlar_to_rank = kazanimlar[:self.settings.reranker_max_items]
         
         # Format kazanımlar for prompt
         kazanim_text = self._format_kazanimlar(kazanimlar_to_rank)
@@ -120,11 +127,8 @@ Her kazanımı soruyla alakalılığına göre skorla (0.0-1.0)."""
         )
         
         try:
-            # Get structured reranking result
-            result: RerankerOutput = await self.structured_llm.ainvoke([
-                {"role": "system", "content": self.SYSTEM_PROMPT},
-                {"role": "user", "content": prompt}
-            ])
+            # Get structured reranking result with resilience
+            result = await self._invoke_llm_with_resilience(prompt)
             
             # Build score map
             score_map = {
@@ -142,8 +146,13 @@ Her kazanımı soruyla alakalılığına göre skorla (0.0-1.0)."""
                 
                 if code in score_map:
                     llm_score = score_map[code]["score"]
-                    # Normalize original score to 0-1 range (assuming max ~10)
-                    original_normalized = min(1.0, original_score / 10.0)
+                    # Normalize original score to 0-1 range
+                    # If already <= 1.0, it's pre-normalized (from hybrid search)
+                    # Otherwise, assume max ~10 from Azure Search
+                    if original_score <= 1.0:
+                        original_normalized = original_score
+                    else:
+                        original_normalized = min(1.0, original_score / 10.0)
                     # Blend scores
                     blended = (
                         (1 - score_blend_ratio) * original_normalized +
@@ -153,8 +162,11 @@ Her kazanımı soruyla alakalılığına göre skorla (0.0-1.0)."""
                     k["rerank_reasoning"] = score_map[code]["reasoning"]
                     k["blended_score"] = blended
                 else:
-                    # Not scored by LLM, keep original
-                    k["blended_score"] = min(1.0, original_score / 10.0)
+                    # Not scored by LLM, keep original normalized
+                    if original_score <= 1.0:
+                        k["blended_score"] = original_score
+                    else:
+                        k["blended_score"] = min(1.0, original_score / 10.0)
             
             # Sort by blended score
             reranked = sorted(
@@ -180,12 +192,36 @@ Her kazanımı soruyla alakalılığına göre skorla (0.0-1.0)."""
         import asyncio
         return asyncio.run(self.rerank(question, kazanimlar, top_k))
     
+    async def _invoke_llm_with_resilience(self, prompt: str) -> RerankerOutput:
+        """
+        Invoke LLM with circuit breaker and retry protection.
+
+        Uses the resilience module for:
+        - Circuit breaker to fast-fail if Azure OpenAI is down
+        - Exponential backoff retry for transient failures
+        - Timeout protection
+        """
+        @with_resilience(
+            circuit_name="azure_openai_reranker",
+            timeout=self.settings.timeout_rerank,
+            use_circuit_breaker=True,
+            use_retry=True
+        )
+        async def _invoke():
+            return await self.structured_llm.ainvoke([
+                {"role": "system", "content": self.SYSTEM_PROMPT},
+                {"role": "user", "content": prompt}
+            ])
+
+        return await _invoke()
+
     def _format_kazanimlar(self, kazanimlar: List[Dict[str, Any]]) -> str:
         """Format kazanımlar for LLM prompt."""
         lines = []
+        truncate_len = self.settings.reranker_truncate_length
         for i, k in enumerate(kazanimlar, 1):
             code = k.get("kazanim_code", "?")
-            desc = k.get("kazanim_description", "")[:300]  # Truncate
+            desc = k.get("kazanim_description", "")[:truncate_len]
             grade = k.get("grade", "?")
             lines.append(f"{i}. [{code}] (Sınıf: {grade})\n   {desc}")
         return "\n\n".join(lines)

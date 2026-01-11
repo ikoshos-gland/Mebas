@@ -12,6 +12,9 @@ from src.agents.nodes import (
     retrieve_kazanimlar,
     retrieve_textbook,
     rerank_results,
+    track_progress,
+    find_prerequisite_gaps,
+    synthesize_interdisciplinary,
     generate_response,
     handle_error
 )
@@ -24,38 +27,45 @@ from src.agents.conditions import (
 def create_meb_rag_graph(checkpointer=None) -> StateGraph:
     """
     Create the MEB RAG question analysis graph.
-    
+
     Graph Flow:
     START → analyze_input → [success?]
         → YES → retrieve_kazanimlar → [success?]
-            → YES → retrieve_textbook → rerank_results → generate_response → END
+            → YES → retrieve_textbook → rerank_results → track_progress
+                  → find_prerequisite_gaps → synthesize_interdisciplinary → generate_response → END
             → RETRY → retrieve_kazanimlar (with relaxed filters)
             → ERROR → handle_error → END
         → NO → handle_error → END
-    
+
+    track_progress node: Auto-tracks high-confidence kazanımlar (>=80%) to user's progress.
+    find_prerequisite_gaps node: Identifies prerequisite knowledge gaps for matched kazanımlar.
+
     Args:
         checkpointer: Optional checkpointer for state persistence
                      Use MemorySaver for dev, PostgresSaver for prod
-    
+
     Returns:
         Compiled LangGraph
     """
     # Create graph with state type
     workflow = StateGraph(QuestionAnalysisState)
-    
+
     # ===== ADD NODES =====
     workflow.add_node("analyze_input", analyze_input)
     workflow.add_node("retrieve_kazanimlar", retrieve_kazanimlar)
     workflow.add_node("retrieve_textbook", retrieve_textbook)
     workflow.add_node("rerank_results", rerank_results)
+    workflow.add_node("track_progress", track_progress)
+    workflow.add_node("find_prerequisite_gaps", find_prerequisite_gaps)
+    workflow.add_node("synthesize_interdisciplinary", synthesize_interdisciplinary)
     workflow.add_node("generate_response", generate_response)
     workflow.add_node("handle_error", handle_error)
-    
+
     # ===== SET ENTRY POINT =====
     workflow.set_entry_point("analyze_input")
-    
+
     # ===== ADD CONDITIONAL EDGES =====
-    
+
     # After analyze_input: check success
     workflow.add_conditional_edges(
         "analyze_input",
@@ -65,7 +75,7 @@ def create_meb_rag_graph(checkpointer=None) -> StateGraph:
             "error": "handle_error"
         }
     )
-    
+
     # After retrieve_kazanimlar: check success with retry
     workflow.add_conditional_edges(
         "retrieve_kazanimlar",
@@ -76,13 +86,16 @@ def create_meb_rag_graph(checkpointer=None) -> StateGraph:
             "error": "handle_error"
         }
     )
-    
+
     # ===== ADD NORMAL EDGES =====
     workflow.add_edge("retrieve_textbook", "rerank_results")
-    workflow.add_edge("rerank_results", "generate_response")
+    workflow.add_edge("rerank_results", "track_progress")
+    workflow.add_edge("track_progress", "find_prerequisite_gaps")
+    workflow.add_edge("find_prerequisite_gaps", "synthesize_interdisciplinary")
+    workflow.add_edge("synthesize_interdisciplinary", "generate_response")
     workflow.add_edge("generate_response", END)
     workflow.add_edge("handle_error", END)
-    
+
     # ===== COMPILE =====
     if checkpointer:
         return workflow.compile(checkpointer=checkpointer)
@@ -120,11 +133,13 @@ class MebRagGraph:
         user_grade: Optional[int] = None,
         user_subject: Optional[str] = None,
         is_exam_mode: bool = False,
-        thread_id: Optional[str] = None
+        thread_id: Optional[str] = None,
+        user_id: Optional[int] = None,
+        conversation_id: Optional[str] = None
     ) -> QuestionAnalysisState:
         """
         Analyze a question (async).
-        
+
         Args:
             question_text: Question text (or empty if image-only)
             question_image_base64: Base64 encoded image
@@ -132,21 +147,25 @@ class MebRagGraph:
             user_subject: User-provided subject hint
             is_exam_mode: YKS mode (True=grade le X, False=grade eq X)
             thread_id: Thread ID for checkpointing
-            
+            user_id: User ID for progress tracking (auto-tracks high-confidence kazanımlar)
+            conversation_id: Conversation ID for source tracking
+
         Returns:
             Final state with analysis results
         """
         from src.agents.state import create_initial_state
-        
+
         # Create initial state
         initial_state = create_initial_state(
             question_text=question_text,
             question_image_base64=question_image_base64,
             user_grade=user_grade,
             user_subject=user_subject,
-            is_exam_mode=is_exam_mode
+            is_exam_mode=is_exam_mode,
+            user_id=user_id,
+            conversation_id=conversation_id
         )
-        
+
         # Config for checkpointing - always provide thread_id if checkpointer exists
         config = {}
         if self.checkpointer:
@@ -154,10 +173,10 @@ class MebRagGraph:
             # Use provided thread_id or generate a new one
             effective_thread_id = thread_id if thread_id else str(uuid.uuid4())
             config = {"configurable": {"thread_id": effective_thread_id}}
-        
+
         # Run graph
         result = await self.graph.ainvoke(initial_state, config=config)
-        
+
         return result
     
     def analyze_sync(
@@ -167,30 +186,34 @@ class MebRagGraph:
         user_grade: Optional[int] = None,
         user_subject: Optional[str] = None,
         is_exam_mode: bool = False,
-        thread_id: Optional[str] = None
+        thread_id: Optional[str] = None,
+        user_id: Optional[int] = None,
+        conversation_id: Optional[str] = None
     ) -> QuestionAnalysisState:
         """
         Analyze a question (sync version).
         """
         from src.agents.state import create_initial_state
-        
+
         initial_state = create_initial_state(
             question_text=question_text,
             question_image_base64=question_image_base64,
             user_grade=user_grade,
             user_subject=user_subject,
-            is_exam_mode=is_exam_mode
+            is_exam_mode=is_exam_mode,
+            user_id=user_id,
+            conversation_id=conversation_id
         )
-        
+
         # Config for checkpointing - always provide thread_id if checkpointer exists
         config = {}
         if self.checkpointer:
             import uuid
             effective_thread_id = thread_id if thread_id else str(uuid.uuid4())
             config = {"configurable": {"thread_id": effective_thread_id}}
-        
+
         result = self.graph.invoke(initial_state, config=config)
-        
+
         return result
     
     async def stream_analysis(

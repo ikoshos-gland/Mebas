@@ -6,10 +6,15 @@ and classify elements (titles, paragraphs, sidebars, figures).
 """
 from azure.ai.documentintelligence import DocumentIntelligenceClient
 from azure.ai.documentintelligence.models import AnalyzeResult, AnalyzeDocumentRequest
+from azure.core.exceptions import HttpResponseError, ServiceRequestError
 from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional
+import asyncio
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ElementType(Enum):
@@ -58,22 +63,77 @@ class LayoutAnalyzer:
     SIDEBAR_MARGIN_RATIO = 0.20
     
     async def analyze_document(
-        self, 
-        client: DocumentIntelligenceClient, 
-        pdf_bytes: bytes
+        self,
+        client: DocumentIntelligenceClient,
+        pdf_bytes: bytes,
+        max_retries: int = 3,
+        initial_delay: float = 30.0
     ) -> AnalyzeResult:
         """
         Analyze document layout with Azure Document Intelligence.
-        
+
         CRITICAL: Uses output_content_format="markdown" for LaTeX formula support!
+
+        Implements retry with exponential backoff for transient failures (timeouts).
+
+        Args:
+            client: DocumentIntelligenceClient instance
+            pdf_bytes: PDF file content as bytes
+            max_retries: Maximum number of retry attempts (default: 3)
+            initial_delay: Initial delay between retries in seconds (default: 30)
         """
-        poller = client.begin_analyze_document(
-            "prebuilt-layout",
-            AnalyzeDocumentRequest(bytes_source=pdf_bytes),
-            output_content_format="markdown"  # CRITICAL for math formulas!
-        )
-        # Wait up to 30 minutes for large file processing
-        return poller.result(timeout=1800)
+        last_error = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                if attempt > 0:
+                    delay = initial_delay * (2 ** (attempt - 1))  # Exponential backoff
+                    logger.info(f"Retry attempt {attempt}/{max_retries} after {delay}s delay...")
+                    await asyncio.sleep(delay)
+
+                # Run the synchronous SDK call in a thread pool to avoid blocking
+                loop = asyncio.get_event_loop()
+                poller = await loop.run_in_executor(
+                    None,
+                    lambda: client.begin_analyze_document(
+                        "prebuilt-layout",
+                        AnalyzeDocumentRequest(bytes_source=pdf_bytes),
+                        output_content_format="markdown"  # CRITICAL for math formulas!
+                    )
+                )
+
+                # Wait up to 30 minutes for large file processing
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: poller.result(timeout=1800)
+                )
+                return result
+
+            except HttpResponseError as e:
+                last_error = e
+                error_code = getattr(e, 'error', {})
+                if hasattr(error_code, 'code'):
+                    error_code = error_code.code
+                else:
+                    error_code = str(e)
+
+                # Retry on timeout or transient errors
+                if "Timeout" in str(error_code) or "timeout" in str(e).lower():
+                    logger.warning(f"Timeout on attempt {attempt + 1}/{max_retries + 1}: {e}")
+                    if attempt < max_retries:
+                        continue
+                # Don't retry on non-transient errors
+                raise
+
+            except (ServiceRequestError, ConnectionError, TimeoutError) as e:
+                last_error = e
+                logger.warning(f"Connection error on attempt {attempt + 1}/{max_retries + 1}: {e}")
+                if attempt < max_retries:
+                    continue
+                raise
+
+        # If we exhausted all retries
+        raise last_error or Exception("Failed to analyze document after all retries")
     
     def classify_elements(self, result: AnalyzeResult) -> List[LayoutElement]:
         """

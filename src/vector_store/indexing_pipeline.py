@@ -19,7 +19,8 @@ from src.vector_store.question_generator import (
 from src.vector_store.index_schema import (
     create_question_index_schema,
     create_image_index_schema,
-    create_textbook_chunk_index_schema
+    create_textbook_chunk_index_schema,
+    create_kazanim_index_schema
 )
 
 
@@ -60,17 +61,134 @@ class IndexingPipeline:
     def create_all_indexes(self) -> None:
         """Create all required indexes"""
         indexes = [
-            create_question_index_schema(self.settings.azure_search_index_questions),
+            # PRIMARY: Kazanımlar - MEB müfredat hedefleri
+            create_kazanim_index_schema(self.settings.azure_search_index_kazanim),
+            # Ders kitabı içerikleri
+            create_textbook_chunk_index_schema(self.settings.azure_search_index_kitap),
+            # Görseller
             create_image_index_schema(self.settings.azure_search_index_images),
-            create_textbook_chunk_index_schema(self.settings.azure_search_index_kitap)
+            # Sentetik sorular (örnek soru üretimi için)
+            create_question_index_schema(self.settings.azure_search_index_questions),
         ]
-        
+
         for index in indexes:
             try:
                 self.index_client.create_or_update_index(index)
                 print(f"✅ Index oluşturuldu/güncellendi: {index.name}")
             except Exception as e:
                 print(f"❌ Index hatası {index.name}: {e}")
+
+    def delete_indexes(self, target_mode: str = "all") -> None:
+        """
+        Delete indexes based on target mode.
+
+        Args:
+            target_mode: "all", "kazanim", or "kitap"
+        """
+        indexes_to_delete = []
+
+        if target_mode == "kazanim":
+            indexes_to_delete = [
+                self.settings.azure_search_index_kazanim,  # Raw kazanımlar
+                self.settings.azure_search_index_questions  # Sentetik sorular
+            ]
+            print(f"\n⚠️  RESET MODE: Deleting Kazanım + Sentetik Soru indexes...")
+
+        elif target_mode == "kitap":
+            indexes_to_delete = [
+                self.settings.azure_search_index_images,
+                self.settings.azure_search_index_kitap
+            ]
+            print(f"\n⚠️  RESET MODE: Deleting Textbook (Chunks & Images) indexes...")
+
+        else:
+            # ALL
+            indexes_to_delete = [
+                self.settings.azure_search_index_kazanim,
+                self.settings.azure_search_index_questions,
+                self.settings.azure_search_index_images,
+                self.settings.azure_search_index_kitap
+            ]
+            print("\n⚠️  RESET MODE: DELETING ALL INDEXES...")
+
+        for index_name in indexes_to_delete:
+            try:
+                self.index_client.delete_index(index_name)
+                print(f"🗑️  Deleted index: {index_name}")
+            except Exception as e:
+                # 404 is fine (index doesn't exist)
+                print(f"ℹ️  Index {index_name} not found or error: {e}")
+        print("✅ Selected indexes deleted.\n")
+
+    def index_kazanimlar_raw(self, kazanimlar: List[dict]) -> int:
+        """
+        Index raw kazanımlar (MEB learning objectives) directly.
+
+        This is the PRIMARY index for curriculum alignment.
+        These are the actual learning objectives from MEB curriculum,
+        NOT synthetic questions.
+
+        Args:
+            kazanimlar: List of kazanim dicts with:
+                - id: unique identifier
+                - code: kazanım code (e.g., "BİY.9.1.1.a")
+                - parent_code: parent kazanım code
+                - description: the learning objective text
+                - title: parent kazanım title
+                - grade: grade level (9, 10, 11, 12)
+                - subject: subject code (BİY, M, F, etc.)
+                - semester: semester (1 or 2)
+
+        Returns:
+            Number of documents indexed
+        """
+        client = self._get_search_client(self.settings.azure_search_index_kazanim)
+        total_indexed = 0
+
+        print(f"\n📚 Indexing {len(kazanimlar)} kazanımlar to PRIMARY index...")
+
+        # Create embeddings for all kazanımlar
+        # Combine title + description for better semantic matching
+        texts_to_embed = []
+        for k in kazanimlar:
+            title = k.get("title", "")
+            desc = k.get("description", "")
+            code = k.get("code", "")
+            # Format: "BİY.9.1.1.a: Title - Description"
+            embed_text = f"{code}: {title} - {desc}" if title else f"{code}: {desc}"
+            texts_to_embed.append(embed_text[:2000])  # Limit for embedding
+
+        embeddings = embed_batch(texts_to_embed)
+
+        # Prepare documents
+        documents = []
+        for kazanim, emb in zip(kazanimlar, embeddings):
+            documents.append({
+                "id": kazanim.get("id"),
+                "code": kazanim.get("code", ""),
+                "parent_code": kazanim.get("parent_code", ""),
+                "description": kazanim.get("description", ""),
+                "title": kazanim.get("title", ""),
+                "grade": kazanim.get("grade", 0),
+                "subject": kazanim.get("subject", ""),
+                "semester": kazanim.get("semester", 0),
+                "embedding": emb
+            })
+
+        # Upload in batches
+        for i in range(0, len(documents), self.BATCH_SIZE):
+            batch = documents[i:i + self.BATCH_SIZE]
+            try:
+                result = client.upload_documents(batch)
+                success = sum(1 for r in result if r.succeeded)
+                total_indexed += success
+                print(f"  ✅ Indexed batch {i//self.BATCH_SIZE + 1}: {success}/{len(batch)} kazanımlar")
+            except Exception as e:
+                print(f"  ❌ Upload error: {e}")
+            time.sleep(self.RATE_LIMIT_DELAY)
+
+        print(f"✅ Total kazanımlar indexed: {total_indexed}")
+        return total_indexed
     
     def index_kazanimlar(
         self,
@@ -94,7 +212,7 @@ class IndexingPipeline:
         
         for i, kazanim in enumerate(kazanimlar):
             code = kazanim.get('code') or kazanim.get('kazanim_code', 'Unknown')
-            print(f"Processing kazanım {i+1}/{len(kazanimlar)}: {code}")
+            print(f"Processing sentetik soru {i+1}/{len(kazanimlar)}: {code}")
             
             if generate_questions:
                 # Generate synthetic questions
@@ -136,7 +254,16 @@ class IndexingPipeline:
             for j, (q, emb) in enumerate(zip(questions, embeddings)):
                 # Sanitize ID: Azure Search only allows letters, digits, _, -, =
                 raw_code = kazanim.get('code', 'K') or 'K'
-                safe_code = raw_code.replace('.', '_').replace('İ', 'I').replace('Ş', 'S').replace('Ğ', 'G').replace('Ü', 'U').replace('Ö', 'O').replace('Ç', 'C')
+                # Replace both uppercase and lowercase Turkish characters
+                safe_code = (raw_code
+                    .replace('.', '_')
+                    .replace('İ', 'I').replace('ı', 'i')
+                    .replace('Ş', 'S').replace('ş', 's')
+                    .replace('Ğ', 'G').replace('ğ', 'g')
+                    .replace('Ü', 'U').replace('ü', 'u')
+                    .replace('Ö', 'O').replace('ö', 'o')
+                    .replace('Ç', 'C').replace('ç', 'c')
+                )
                 # Add UUID prefix to ensure uniqueness across different PDFs
                 doc_id = f"{safe_code}-{uuid.uuid4().hex[:8]}-{j:03d}"
                 documents.append({
@@ -145,14 +272,15 @@ class IndexingPipeline:
                     "difficulty": q.difficulty,
                     "question_type": q.question_type,
                     "parent_kazanim_id": q.parent_kazanim_id,
-                    "parent_kazanim_code": q.parent_kazanim_code,
+                    "parent_kazanim_code": kazanim.get("parent_code", q.parent_kazanim_code),
                     "parent_kazanim_desc": kazanim.get("description", ""),
+                    "kazanim_title": kazanim.get("title", ""),  # Parent title for context
                     "grade": kazanim.get("grade", 0),
                     "subject": kazanim.get("subject", ""),
                     "semester": kazanim.get("semester", 0),
                     "embedding": emb
                 })
-            
+
             # Upload batch
             try:
                 # DEBUG: Show document details
@@ -185,7 +313,7 @@ class IndexingPipeline:
         total_indexed = 0
         
         for i, kazanim in enumerate(kazanimlar):
-            print(f"Processing kazanım {i+1}/{len(kazanimlar)}: {kazanim.get('code')}")
+            print(f"Processing sentetik soru {i+1}/{len(kazanimlar)}: {kazanim.get('code')}")
             
             if generate_questions:
                 questions = await self.question_generator.generate_for_kazanim_async(
@@ -206,13 +334,21 @@ class IndexingPipeline:
             
             question_texts = [q.question_text for q in questions]
             embeddings = await embed_batch_async(question_texts)
-            
-            
+
             documents = []
             for j, (q, emb) in enumerate(zip(questions, embeddings)):
                 # Sanitize ID: Azure Search only allows letters, digits, _, -, =
                 raw_code = kazanim.get('code', 'K') or 'K'
-                safe_code = raw_code.replace('.', '_').replace('İ', 'I').replace('Ş', 'S').replace('Ğ', 'G').replace('Ü', 'U').replace('Ö', 'O').replace('Ç', 'C')
+                # Replace both uppercase and lowercase Turkish characters
+                safe_code = (raw_code
+                    .replace('.', '_')
+                    .replace('İ', 'I').replace('ı', 'i')
+                    .replace('Ş', 'S').replace('ş', 's')
+                    .replace('Ğ', 'G').replace('ğ', 'g')
+                    .replace('Ü', 'U').replace('ü', 'u')
+                    .replace('Ö', 'O').replace('ö', 'o')
+                    .replace('Ç', 'C').replace('ç', 'c')
+                )
                 # Add UUID prefix to ensure uniqueness across different PDFs
                 doc_id = f"{safe_code}-{uuid.uuid4().hex[:8]}-{j:03d}"
                 documents.append({
@@ -221,14 +357,15 @@ class IndexingPipeline:
                     "difficulty": q.difficulty,
                     "question_type": q.question_type,
                     "parent_kazanim_id": q.parent_kazanim_id,
-                    "parent_kazanim_code": q.parent_kazanim_code,
+                    "parent_kazanim_code": kazanim.get("parent_code", q.parent_kazanim_code),
                     "parent_kazanim_desc": kazanim.get("description", ""),
+                    "kazanim_title": kazanim.get("title", ""),  # Parent title for context
                     "grade": kazanim.get("grade", 0),
                     "subject": kazanim.get("subject", ""),
                     "semester": kazanim.get("semester", 0),
                     "embedding": emb
                 })
-            
+
             try:
                 result = await asyncio.to_thread(client.upload_documents, documents)
                 success = sum(1 for r in result if r.succeeded)
@@ -269,6 +406,10 @@ class IndexingPipeline:
                 "image_path": img.get("image_path", ""),
                 "width": img.get("width", 0),
                 "height": img.get("height", 0),
+                # Grade/Subject for filtering - CRITICAL for pedagogical correctness
+                "grade": img.get("grade", 0),
+                "subject": img.get("subject", ""),
+                "textbook_id": img.get("textbook_id", 0),
                 "embedding": emb
             })
         
@@ -290,32 +431,49 @@ class IndexingPipeline:
     def index_textbook_chunks(self, chunks: List[dict]) -> int:
         """
         Index textbook chunks directly.
-        
+
         Args:
             chunks: List of chunk dicts with content, type, etc.
-            
+
         Returns:
             Number indexed
         """
         client = self._get_search_client(self.settings.azure_search_index_kitap)
-        
+
         # Create embeddings from content
-        contents = [c.get("content", "")[:2000] for c in chunks]  # Truncate for embedding
+        # Use smart truncation: hierarchy_path + content for better semantic representation
+        # text-embedding-3-large supports ~8191 tokens, so 6000 chars (~1500 tokens) is safe
+        # Include hierarchy_path for context
+        contents = []
+        for c in chunks:
+            hierarchy = c.get("hierarchy_path", "")
+            content = c.get("content", "")
+            # Combine hierarchy (context) with content for better embeddings
+            # If content is very long, prioritize beginning (usually definitions/concepts)
+            # and end (usually conclusions/summaries)
+            if len(content) > 5500:
+                # Smart truncation: first 4000 chars + last 1500 chars
+                content = content[:4000] + "\n...\n" + content[-1500:]
+            embed_text = f"{hierarchy}\n\n{content}" if hierarchy else content
+            contents.append(embed_text[:6000])  # Hard limit for safety
+
         embeddings = embed_batch(contents)
-        
+
         documents = []
         for chunk, emb in zip(chunks, embeddings):
             documents.append({
                 "id": chunk.get("id"),
-                "content": chunk.get("content", ""),
+                "content": chunk.get("content", ""),  # Store full content
                 "chunk_type": chunk.get("chunk_type", ""),
                 "hierarchy_path": chunk.get("hierarchy_path", ""),
                 "page_range": chunk.get("page_range", ""),
                 "is_sidebar": chunk.get("is_sidebar", False),
                 "textbook_id": chunk.get("textbook_id", 0),
+                "textbook_name": chunk.get("textbook_name", ""),
                 "chapter_id": chunk.get("chapter_id", 0),
                 "grade": chunk.get("grade", 0),
                 "subject": chunk.get("subject", ""),
+                "semester": chunk.get("semester", 0),  # Added semester for curriculum alignment
                 "embedding": emb
             })
         

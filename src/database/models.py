@@ -3,13 +3,143 @@ MEB RAG Sistemi - Veritabanı Modelleri
 SQLAlchemy ORM Models for MEB Educational Content
 """
 from sqlalchemy import (
-    Column, String, Integer, ForeignKey, Text, Float, 
-    DateTime, Boolean, Table
+    Column, String, Integer, ForeignKey, Text, Float,
+    DateTime, Boolean, Table, JSON, Index
 )
 from sqlalchemy.orm import relationship, declarative_base
 from datetime import datetime
+import uuid
 
 Base = declarative_base()
+
+
+# ================== KULLANICI VE ABONELİK ==================
+
+class User(Base):
+    """Kullanıcı modeli - Öğrenci, Öğretmen, Admin"""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    hashed_password = Column(String(255), nullable=True)  # Null for OAuth users
+    full_name = Column(String(100), nullable=False)
+    avatar_url = Column(String(512), nullable=True)
+
+    # Rol ve seviye
+    role = Column(String(20), default="student")  # student, teacher, admin
+    grade = Column(Integer, nullable=True)  # 1-12, null for teachers
+
+    # OAuth
+    google_id = Column(String(255), nullable=True, unique=True, index=True)
+
+    # Durum
+    is_active = Column(Boolean, default=True)
+    is_verified = Column(Boolean, default=False)
+
+    # Tercihler (JSON)
+    preferences = Column(JSON, default=dict)
+
+    # Zaman damgaları
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_login = Column(DateTime, nullable=True)
+
+    # İlişkiler
+    subscription = relationship("Subscription", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
+    kazanim_progress = relationship("UserKazanimProgress", back_populates="user", cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<User {self.email}>"
+
+
+class Subscription(Base):
+    """Abonelik modeli - Kullanım limitleri"""
+    __tablename__ = "subscriptions"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
+
+    # Plan tipi
+    plan = Column(String(20), default="free")  # free, student, school
+
+    # Kullanım limitleri
+    questions_used_today = Column(Integer, default=0)
+    questions_limit = Column(Integer, default=10)  # free: 10, student: unlimited (-1)
+
+    # Görsel analiz limiti
+    images_used_today = Column(Integer, default=0)
+    images_limit = Column(Integer, default=0)  # free: 0, student: 20, school: unlimited
+
+    # Sıfırlama zamanı
+    last_reset = Column(DateTime, default=datetime.utcnow)
+
+    # Abonelik tarihleri
+    started_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=True)  # null = lifetime/free
+
+    # İlişkiler
+    user = relationship("User", back_populates="subscription")
+
+    def __repr__(self):
+        return f"<Subscription {self.user_id}: {self.plan}>"
+
+
+class Conversation(Base):
+    """Sohbet oturumu"""
+    __tablename__ = "conversations"
+
+    id = Column(String(50), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    # Sohbet bilgileri
+    title = Column(String(200), default="Yeni Sohbet")
+    subject = Column(String(50), nullable=True)  # Matematik, Fizik, etc.
+    grade = Column(Integer, nullable=True)
+
+    # Durum
+    is_archived = Column(Boolean, default=False)
+
+    # Zaman damgaları
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # İlişkiler
+    user = relationship("User", back_populates="conversations")
+    messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at")
+
+    def __repr__(self):
+        return f"<Conversation {self.id}: {self.title}>"
+
+
+class Message(Base):
+    """Sohbet mesajı"""
+    __tablename__ = "messages"
+
+    id = Column(Integer, primary_key=True)
+    conversation_id = Column(String(50), ForeignKey("conversations.id"), nullable=False, index=True)
+
+    # Mesaj içeriği
+    role = Column(String(20), nullable=False)  # user, assistant
+    content = Column(Text, nullable=False)
+
+    # Görsel (varsa)
+    image_url = Column(String(512), nullable=True)
+
+    # RAG analiz referansı
+    analysis_id = Column(String(50), nullable=True)
+
+    # Extra data (kazanımlar, kaynaklar vs.)
+    extra_data = Column(JSON, default=dict)
+
+    # Zaman damgası
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # İlişkiler
+    conversation = relationship("Conversation", back_populates="messages")
+
+    def __repr__(self):
+        return f"<Message {self.id}: {self.role}>"
 
 
 # ================== MANY-TO-MANY: KAZANIM PREREQUISITES ==================
@@ -186,19 +316,65 @@ class TextbookImage(Base):
 class Feedback(Base):
     """Kullanıcı geri bildirimi - sistem iyileştirme için"""
     __tablename__ = "feedbacks"
-    
+
     id = Column(Integer, primary_key=True)
     analysis_id = Column(String(50), index=True)
     rating = Column(Integer)                  # -1: thumbs down, 1: thumbs up
     comment = Column(Text, nullable=True)
     correct_kazanim = Column(String(20), nullable=True)
-    
+
     # Debugging için
     question_text = Column(Text)
     matched_kazanim = Column(String(20))
     response_time_ms = Column(Integer)
-    
+
     created_at = Column(DateTime, default=datetime.utcnow)
-    
+
     def __repr__(self):
         return f"<Feedback {self.analysis_id}: {self.rating}>"
+
+
+# ================== KULLANICI KAZANIM İLERLEME TAKİBİ ==================
+
+class UserKazanimProgress(Base):
+    """
+    Kullanıcı kazanım ilerleme takibi.
+    Sohbette yüksek güven skorlu kazanımlar otomatik takibe alınır.
+    AI, öğrencinin anlayışını tespit ettiğinde durum güncellenir.
+    """
+    __tablename__ = "user_kazanim_progress"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    kazanim_code = Column(String(50), nullable=False, index=True)
+
+    # Durum: tracked -> in_progress -> understood
+    status = Column(String(20), default="tracked")
+
+    # Güven skorları
+    initial_confidence_score = Column(Float, default=0.0)  # İlk takip edildiğindeki skor
+    understanding_confidence = Column(Float, nullable=True)  # AI'ın anlama tespiti güveni
+
+    # Kaynak takibi
+    source_conversation_id = Column(String(50), ForeignKey("conversations.id"), nullable=True)
+
+    # Zaman damgaları
+    tracked_at = Column(DateTime, default=datetime.utcnow)
+    understood_at = Column(DateTime, nullable=True)
+
+    # AI tespit sinyalleri (JSON array)
+    # Örnek: ["correct_explanation", "teach_back"]
+    understanding_signals = Column(JSON, default=list)
+
+    # İlişkiler
+    user = relationship("User", back_populates="kazanim_progress")
+    source_conversation = relationship("Conversation")
+
+    # Composite unique constraint - bir kullanıcı bir kazanımı sadece bir kez takip edebilir
+    __table_args__ = (
+        Index("ix_user_kazanim_progress_user_status", "user_id", "status"),
+        Index("ix_user_kazanim_progress_user_code", "user_id", "kazanim_code", unique=True),
+    )
+
+    def __repr__(self):
+        return f"<UserKazanimProgress {self.user_id}:{self.kazanim_code}:{self.status}>"

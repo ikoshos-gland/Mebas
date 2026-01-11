@@ -2,11 +2,6 @@
 Tests for Database Module (Phase 3)
 """
 import pytest
-import os
-from pathlib import Path
-
-# Set test database before importing
-os.environ["DATABASE_URL"] = "sqlite:///data/test_meb_rag.db"
 
 
 class TestDatabaseModels:
@@ -73,20 +68,17 @@ class TestDatabaseModels:
 
 class TestDatabaseOperations:
     """Tests for database operations"""
-    
+
     @pytest.fixture(autouse=True)
     def setup_db(self):
         """Setup and teardown test database"""
-        from src.database.db import init_db, drop_db
-        
+        from src.database.db import init_db, drop_db, reinitialize_engine
+
+        # Reinitialize with in-memory database for tests
+        reinitialize_engine("sqlite:///:memory:")
         init_db()
         yield
         drop_db()
-        
-        # Clean up test db file
-        test_db = Path("data/test_meb_rag.db")
-        if test_db.exists():
-            test_db.unlink()
     
     def test_init_db(self):
         """Test database initialization"""
