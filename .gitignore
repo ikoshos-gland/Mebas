@@ -47,6 +47,8 @@ htmlcov/
 
 # Data files - Don't commit large files!
 data/processed/
+data/pdfs/
+*.pdf
 *.db
 *.sqlite3
 
