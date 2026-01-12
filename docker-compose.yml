@@ -15,8 +15,8 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql://meb:meb123@postgres:5432/mebrag
-      - DEBUG=true
+      - DATABASE_URL=postgresql://meb:${POSTGRES_PASSWORD}@postgres:5432/mebrag
+      - DEBUG=${DEBUG:-false}
       - PYTHONUNBUFFERED=1
       - PYTHONFAULTHANDLER=1
     volumes:
@@ -25,6 +25,7 @@ services:
       - ./api:/app/api
       - ./src:/app/src
       - ./config:/app/config
+      - ./sorular:/app/sorular
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
     depends_on:
       postgres:
@@ -73,7 +74,7 @@ services:
     environment:
       POSTGRES_DB: mebrag
       POSTGRES_USER: meb
-      POSTGRES_PASSWORD: meb123
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     # Port not exposed externally - API connects via internal network
     # ports:
     #   - "5432:5432"

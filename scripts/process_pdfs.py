@@ -505,13 +505,14 @@ async def process_single_pdf(
     print(f"[OK] Completed Textbook: {pdf_path.name}")
 
 
-async def main(process_mode: str = "all", reset: str = None):
+async def main(process_mode: str = "all", reset: str = None, parallel_count: int = 1):
     """
     Main processing function.
 
     Args:
         process_mode: "all", "kazanim", or "kitap" - determines which PDFs to process
         reset: Index deletion mode - "all", "kazanim", "kitap", or None (no deletion)
+        parallel_count: Number of PDFs to process in parallel (default: 1)
     """
     print("="*60)
     print("MEB RAG - PDF Ingestion Pipeline")
@@ -608,22 +609,88 @@ async def main(process_mode: str = "all", reset: str = None):
         print("✅ Tüm dosyalar zaten işlenmiş!")
         return
 
-    # Process each PDF
-    for i, pdf_file in enumerate(to_process, 1):
-        print(f"\n[{i}/{len(to_process)}] Processing...")
-        try:
-            await process_single_pdf(
-                pdf_file,
-                settings,
-                doc_client,
-                vision_client,
-                pipeline
-            )
-        except Exception as e:
-            print(f"[ERROR] Error processing {pdf_file.name}: {e}")
-            import traceback
-            traceback.print_exc()
-            # Don't mark as processed if there was an error!
+    # Process PDFs (parallel or sequential based on parallel_count)
+
+    if parallel_count > 1:
+        print(f"\n🚀 Paralel işlem modu: {parallel_count} PDF aynı anda işlenecek")
+
+        # Semaphore for limiting concurrent processing
+        semaphore = asyncio.Semaphore(parallel_count)
+
+        # Track progress
+        completed = {"count": 0, "success": 0, "failed": 0}
+        total = len(to_process)
+
+        async def process_with_limit(pdf_file, index):
+            async with semaphore:
+                try:
+                    # Calculate timeout based on file size
+                    file_size_mb = pdf_file.stat().st_size / (1024 * 1024)
+                    if file_size_mb > 100:
+                        timeout = 3600  # 60 dakika for >100MB files
+                        timeout_str = "60 dakika"
+                    elif file_size_mb > 50:
+                        timeout = 2700  # 45 dakika for >50MB files
+                        timeout_str = "45 dakika"
+                    else:
+                        timeout = 1800  # 30 dakika for smaller files
+                        timeout_str = "30 dakika"
+
+                    print(f"\n[{index}/{total}] 🔄 Starting: {pdf_file.name} ({file_size_mb:.1f}MB, timeout: {timeout_str})")
+                    await asyncio.wait_for(
+                        process_single_pdf(
+                            pdf_file,
+                            settings,
+                            doc_client,
+                            vision_client,
+                            pipeline
+                        ),
+                        timeout=timeout
+                    )
+                    completed["success"] += 1
+                    print(f"[{index}/{total}] ✅ Completed: {pdf_file.name}")
+                except asyncio.TimeoutError:
+                    completed["failed"] += 1
+                    print(f"[{index}/{total}] ⏰ TIMEOUT: {pdf_file.name} (timeout aşıldı)")
+                except Exception as e:
+                    completed["failed"] += 1
+                    print(f"[{index}/{total}] ❌ ERROR: {pdf_file.name}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                finally:
+                    completed["count"] += 1
+                    remaining = total - completed["count"]
+                    print(f"📊 İlerleme: {completed['count']}/{total} tamamlandı, {remaining} kaldı")
+
+        # Create tasks for all PDFs
+        tasks = [
+            process_with_limit(pdf_file, i)
+            for i, pdf_file in enumerate(to_process, 1)
+        ]
+
+        # Run all tasks concurrently (semaphore limits actual parallelism)
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+        print(f"\n{'='*60}")
+        print(f"📊 SONUÇ: {completed['success']} başarılı, {completed['failed']} başarısız")
+        print(f"{'='*60}")
+    else:
+        # Sequential processing (original behavior)
+        for i, pdf_file in enumerate(to_process, 1):
+            print(f"\n[{i}/{len(to_process)}] Processing...")
+            try:
+                await process_single_pdf(
+                    pdf_file,
+                    settings,
+                    doc_client,
+                    vision_client,
+                    pipeline
+                )
+            except Exception as e:
+                print(f"[ERROR] Error processing {pdf_file.name}: {e}")
+                import traceback
+                traceback.print_exc()
+                # Don't mark as processed if there was an error!
 
     print("\n[DONE] All processing completed!")
 
@@ -635,12 +702,13 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Örnekler:
-  python scripts/process_pdfs.py                    # Tüm PDF'leri işle
-  python scripts/process_pdfs.py --reset            # Önce tüm indexleri sil sonra işle
-  python scripts/process_pdfs.py -k -r              # Sadece kazanımları işle ve önce sil
-  python scripts/process_pdfs.py -t --reset-kitap   # Kitapları işle, sadece kitap indexini sil
-  python scripts/process_pdfs.py --reset-kitap      # Sadece kitap indexini sil (işlem yapmadan)
-  python scripts/process_pdfs.py --reset-kazanim    # Sadece kazanım indexini sil (işlem yapmadan)
+  python scripts/process_pdfs.py                        # Tüm PDF'leri işle
+  python scripts/process_pdfs.py --reset                # Önce tüm indexleri sil sonra işle
+  python scripts/process_pdfs.py -k -r                  # Sadece kazanımları işle ve önce sil
+  python scripts/process_pdfs.py -t --reset-kitap       # Kitapları işle, sadece kitap indexini sil
+  python scripts/process_pdfs.py -t --reset-kitap -p 3  # 3 kitabı paralel işle (önerilen)
+  python scripts/process_pdfs.py --reset-kitap          # Sadece kitap indexini sil (işlem yapmadan)
+  python scripts/process_pdfs.py --reset-kazanim        # Sadece kazanım indexini sil (işlem yapmadan)
         """
     )
 
@@ -681,6 +749,14 @@ if __name__ == "__main__":
         help="Sadece index sil, PDF işleme yapma (--reset-* ile birlikte kullan)."
     )
 
+    parser.add_argument(
+        "--parallel", "-p",
+        type=int,
+        default=1,
+        metavar="N",
+        help="N adet PDF'i paralel işle (varsayılan: 1, önerilen: 2-3)"
+    )
+
     args = parser.parse_args()
 
     # Determine processing mode
@@ -715,5 +791,5 @@ if __name__ == "__main__":
         pipeline.delete_indexes(reset_mode)
         print("[DONE] Index deletion completed.")
     else:
-        asyncio.run(main(mode, reset=reset_mode))
+        asyncio.run(main(mode, reset=reset_mode, parallel_count=args.parallel))
 

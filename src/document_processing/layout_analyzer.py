@@ -66,8 +66,8 @@ class LayoutAnalyzer:
         self,
         client: DocumentIntelligenceClient,
         pdf_bytes: bytes,
-        max_retries: int = 3,
-        initial_delay: float = 30.0
+        max_retries: int = 5,
+        initial_delay: float = 60.0
     ) -> AnalyzeResult:
         """
         Analyze document layout with Azure Document Intelligence.
@@ -75,20 +75,30 @@ class LayoutAnalyzer:
         CRITICAL: Uses output_content_format="markdown" for LaTeX formula support!
 
         Implements retry with exponential backoff for transient failures (timeouts).
+        Large files (>50MB) get extra patience.
 
         Args:
             client: DocumentIntelligenceClient instance
             pdf_bytes: PDF file content as bytes
-            max_retries: Maximum number of retry attempts (default: 3)
-            initial_delay: Initial delay between retries in seconds (default: 30)
+            max_retries: Maximum number of retry attempts (default: 5)
+            initial_delay: Initial delay between retries in seconds (default: 60)
         """
         last_error = None
+        file_size_mb = len(pdf_bytes) / (1024 * 1024)
+
+        # Large files need more patience
+        if file_size_mb > 100:
+            max_retries = max(max_retries, 7)
+            initial_delay = max(initial_delay, 120.0)
+            logger.info(f"Large file detected ({file_size_mb:.0f}MB) - using extended retries: {max_retries} attempts, {initial_delay}s initial delay")
 
         for attempt in range(max_retries + 1):
             try:
                 if attempt > 0:
-                    delay = initial_delay * (2 ** (attempt - 1))  # Exponential backoff
-                    logger.info(f"Retry attempt {attempt}/{max_retries} after {delay}s delay...")
+                    # Exponential backoff with cap at 10 minutes
+                    delay = min(initial_delay * (1.5 ** (attempt - 1)), 600)
+                    logger.info(f"⏳ Retry attempt {attempt}/{max_retries} after {delay:.0f}s delay...")
+                    print(f"      ⏳ Retry {attempt}/{max_retries} - bekliyor {delay:.0f}s...")
                     await asyncio.sleep(delay)
 
                 # Run the synchronous SDK call in a thread pool to avoid blocking
@@ -102,10 +112,10 @@ class LayoutAnalyzer:
                     )
                 )
 
-                # Wait up to 30 minutes for large file processing
+                # Wait up to 45 minutes for large file processing
                 result = await loop.run_in_executor(
                     None,
-                    lambda: poller.result(timeout=1800)
+                    lambda: poller.result(timeout=2700)
                 )
                 return result
 
@@ -118,8 +128,9 @@ class LayoutAnalyzer:
                     error_code = str(e)
 
                 # Retry on timeout or transient errors
-                if "Timeout" in str(error_code) or "timeout" in str(e).lower():
-                    logger.warning(f"Timeout on attempt {attempt + 1}/{max_retries + 1}: {e}")
+                if "Timeout" in str(error_code) or "timeout" in str(e).lower() or "429" in str(e) or "503" in str(e):
+                    logger.warning(f"Timeout/Throttle on attempt {attempt + 1}/{max_retries + 1}: {e}")
+                    print(f"      ⚠️ Timeout/Throttle attempt {attempt + 1}/{max_retries + 1}")
                     if attempt < max_retries:
                         continue
                 # Don't retry on non-transient errors
@@ -128,6 +139,7 @@ class LayoutAnalyzer:
             except (ServiceRequestError, ConnectionError, TimeoutError) as e:
                 last_error = e
                 logger.warning(f"Connection error on attempt {attempt + 1}/{max_retries + 1}: {e}")
+                print(f"      ⚠️ Connection error attempt {attempt + 1}/{max_retries + 1}")
                 if attempt < max_retries:
                     continue
                 raise

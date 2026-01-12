@@ -48,6 +48,7 @@ class User(Base):
     subscription = relationship("Subscription", back_populates="user", uselist=False, cascade="all, delete-orphan")
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
     kazanim_progress = relationship("UserKazanimProgress", back_populates="user", cascade="all, delete-orphan")
+    generated_exams = relationship("GeneratedExam", back_populates="user", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<User {self.email}>"
@@ -123,8 +124,8 @@ class Message(Base):
     role = Column(String(20), nullable=False)  # user, assistant
     content = Column(Text, nullable=False)
 
-    # Görsel (varsa)
-    image_url = Column(String(512), nullable=True)
+    # Görsel (varsa) - Base64 encoded images can be very large
+    image_url = Column(Text, nullable=True)
 
     # RAG analiz referansı
     analysis_id = Column(String(50), nullable=True)
@@ -335,6 +336,38 @@ class Feedback(Base):
 
 
 # ================== KULLANICI KAZANIM İLERLEME TAKİBİ ==================
+
+class GeneratedExam(Base):
+    """
+    Oluşturulan sınav PDF'leri.
+    Kullanıcının takip ettiği kazanımlara göre LLM destekli sınav oluşturma.
+    """
+    __tablename__ = "generated_exams"
+
+    id = Column(String(50), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    # Sınav bilgileri
+    title = Column(String(200), default="Çalışma Sınavı")
+    pdf_path = Column(String(512), nullable=False)
+    question_count = Column(Integer, nullable=False)
+
+    # Kapsanan kazanımlar ve sorular (JSON)
+    kazanimlar_json = Column(JSON, default=list)  # ["MAT.10.1.1", "MAT.10.1.2"]
+    questions_json = Column(JSON, default=list)   # [{"file": "...", "kazanim": "...", "difficulty": "...", "answer": "..."}]
+
+    # Zorluk dağılımı
+    difficulty_distribution = Column(JSON, default=dict)  # {"kolay": 3, "orta": 5, "zor": 2}
+
+    # Zaman damgaları
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # İlişkiler
+    user = relationship("User", back_populates="generated_exams")
+
+    def __repr__(self):
+        return f"<GeneratedExam {self.id}: {self.title}>"
+
 
 class UserKazanimProgress(Base):
     """

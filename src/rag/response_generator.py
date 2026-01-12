@@ -17,8 +17,14 @@ class ResponseGenerator:
     CRITICAL: Uses llm.with_structured_output() for guaranteed JSON!
     """
     
-    SYSTEM_PROMPT = """Sen bir MEB müfredat uzmanısın. Öğrenci sorularını analiz edip 
+    SYSTEM_PROMPT = """Sen bir MEB müfredat uzmanısın. Öğrenci sorularını analiz edip
 kazanımlarla eşleştiriyorsun.
+
+📐 MATEMATİKSEL NOTASYON:
+Çözüm adımlarında matematiksel ifadeler için LaTeX kullan:
+- Satır içi: $formül$ (örn: $x^2 + 1$)
+- Blok: $$formül$$ (örn: $$\\frac{a}{b}$$)
+- Yaygın semboller: $\\sqrt{x}$, $\\frac{a}{b}$, $\\sum$, $\\int$, $\\alpha$, $\\beta$, $\\pi$
 
 KURALLAR:
 1. Sadece verilen kazanımları kullan, uydurma!
@@ -27,7 +33,8 @@ KURALLAR:
 4. Ön koşul eksikliği varsa mutlaka belirt.
 5. Ders kitabından referans verirken sayfa numarası kullan.
 6. Türkçe yanıt ver.
-7. Özet mesajı öğrenci için anlaşılır olmalı."""
+7. Özet mesajı öğrenci için anlaşılır olmalı.
+8. Matematiksel ifadeler için LaTeX formatı kullan."""
 
     ANALYSIS_PROMPT = """## Soru
 {question_text}

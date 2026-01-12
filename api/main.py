@@ -5,13 +5,13 @@ Main application with CORS, rate limiting, and routes
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from contextlib import asynccontextmanager
 import time
 
 from api.models import HealthResponse, ErrorResponse
+from api.limiter import limiter
 from api.routes.analysis import router as analysis_router
 from api.routes.feedback import router as feedback_router
 from api.routes.content import router as content_router
@@ -20,15 +20,13 @@ from api.routes.auth import router as auth_router
 from api.routes.users import router as users_router
 from api.routes.conversations import router as conversations_router
 from api.routes.progress import router as progress_router
+from api.routes.exams import router as exams_router
 from config.settings import get_settings
 from config.logging import configure_logging
 import logging
 
 # Initialize logger
 logger = logging.getLogger("api.main")
-
-# Rate limiter
-limiter = Limiter(key_func=get_remote_address)
 
 
 @asynccontextmanager
@@ -85,22 +83,27 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Add CORS
+# Add CORS - Restricted for security
 settings = get_settings()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        settings.frontend_url,
+
+# In debug mode, allow localhost origins; in production, only frontend_url
+cors_origins = [settings.frontend_url]
+if settings.debug:
+    cors_origins.extend([
         "http://localhost:3000",
         "http://localhost:3001",
         "http://localhost:5173",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:3001",
         "http://127.0.0.1:5173",
-    ],
+    ])
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
 )
 
 
@@ -177,6 +180,7 @@ app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(conversations_router)
 app.include_router(progress_router)
+app.include_router(exams_router)
 app.include_router(analysis_router)
 app.include_router(feedback_router)
 app.include_router(content_router)

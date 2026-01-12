@@ -2,7 +2,7 @@
 MEB RAG Sistemi - Analysis Routes
 Question analysis endpoints
 """
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 from typing import AsyncGenerator, Optional
 import time
@@ -20,6 +20,7 @@ from api.models import (
 from src.agents import MebRagGraph, get_effective_grade
 from api.auth.deps import get_optional_user
 from src.database.models import User
+from api.limiter import limiter
 
 
 router = APIRouter(prefix="/analyze", tags=["Analysis"])
@@ -37,8 +38,10 @@ def get_graph() -> MebRagGraph:
 
 
 @router.post("/image", response_model=AnalysisResponse)
+@limiter.limit("10/minute")
 async def analyze_image(
-    request: AnalyzeImageRequest,
+    request: Request,
+    body: AnalyzeImageRequest,
     current_user: Optional[User] = Depends(get_optional_user)
 ):
     """
@@ -56,10 +59,10 @@ async def analyze_image(
 
         # Run analysis with optional user_id for progress tracking
         result = await graph.analyze(
-            question_image_base64=request.image_base64,
-            user_grade=request.grade,
-            user_subject=request.subject,
-            is_exam_mode=request.is_exam_mode,
+            question_image_base64=body.image_base64,
+            user_grade=body.grade,
+            user_subject=body.subject,
+            is_exam_mode=body.is_exam_mode,
             user_id=current_user.id if current_user else None
         )
         
@@ -136,8 +139,10 @@ async def analyze_image(
 
 
 @router.post("/text", response_model=AnalysisResponse)
+@limiter.limit("20/minute")
 async def analyze_text(
-    request: AnalyzeTextRequest,
+    request: Request,
+    body: AnalyzeTextRequest,
     current_user: Optional[User] = Depends(get_optional_user)
 ):
     """
@@ -154,13 +159,13 @@ async def analyze_text(
         graph = get_graph()
 
         result = await graph.analyze(
-            question_text=request.question_text,
-            user_grade=request.grade,
-            user_subject=request.subject,
-            is_exam_mode=request.is_exam_mode,
+            question_text=body.question_text,
+            user_grade=body.grade,
+            user_subject=body.subject,
+            is_exam_mode=body.is_exam_mode,
             user_id=current_user.id if current_user else None
         )
-        
+
         processing_time = int((time.time() - start_time) * 1000)
 
         # Handle None explicitly
@@ -174,15 +179,16 @@ async def analyze_text(
                 "chapter": chunk.get("hierarchy_path", ""),
                 "pages": chunk.get("page_range", ""),
                 "content": chunk.get("content", "")[:500] if chunk.get("content") else "",
-                "relevance": f"Eşleşme skoru: {chunk.get('score', 0):.2f}"
+                "relevance": f"Eşleşme skoru: {chunk.get('score', 0):.2f}",
+                "textbook_name": chunk.get("textbook_name", "")
             })
-        
+
         # Step 1: Analyze question with dedicated QuestionAnalyzer (separate from RAG)
         question_analysis = None
         try:
             from src.rag.question_analyzer import QuestionAnalyzer
             analyzer = QuestionAnalyzer()
-            question_analysis = await analyzer.analyze(request.question_text)
+            question_analysis = await analyzer.analyze(body.question_text)
         except Exception as qa_error:
             print(f"QuestionAnalyzer error: {qa_error}")
             question_analysis = None
@@ -193,7 +199,7 @@ async def analyze_text(
             from src.rag.teacher_synthesizer import TeacherSynthesizer
             synthesizer = TeacherSynthesizer()
             teacher_explanation = await synthesizer.synthesize(
-                question_text=request.question_text,
+                question_text=body.question_text,
                 matched_kazanimlar=result.get("matched_kazanimlar", []),
                 textbook_chunks=related_chunks,
                 question_analysis=question_analysis,  # Pass pre-solved analysis
@@ -235,7 +241,8 @@ async def analyze_text(
 
 
 @router.post("/image-stream")
-async def analyze_image_stream(request: AnalyzeImageRequest):
+@limiter.limit("10/minute")
+async def analyze_image_stream(request: Request, body: AnalyzeImageRequest):
     """
     Stream image analysis with GPT-5.2 teacher explanation.
 
@@ -246,12 +253,12 @@ async def analyze_image_stream(request: AnalyzeImageRequest):
         try:
             # Load chat history if conversation_id provided
             chat_history = []
-            if request.conversation_id:
+            if body.conversation_id:
                 try:
                     from src.database.db import get_session
                     from src.rag.chat_memory import load_chat_history
                     db = get_session()
-                    chat_history = load_chat_history(db, request.conversation_id, max_messages=6)
+                    chat_history = load_chat_history(db, body.conversation_id, max_messages=6)
                     db.close()
                 except Exception as e:
                     print(f"Failed to load chat history: {e}")
@@ -259,11 +266,11 @@ async def analyze_image_stream(request: AnalyzeImageRequest):
             # Step 1: Do RAG retrieval (non-streaming)
             graph = get_graph()
             result = await graph.analyze(
-                question_image_base64=request.image_base64,
-                user_grade=request.grade,
-                user_subject=request.subject,
-                is_exam_mode=request.is_exam_mode,
-                conversation_id=request.conversation_id
+                question_image_base64=body.image_base64,
+                user_grade=body.grade,
+                user_subject=body.subject,
+                is_exam_mode=body.is_exam_mode,
+                conversation_id=body.conversation_id
             )
 
             question_text = result.get("question_text", "")
@@ -288,7 +295,8 @@ async def analyze_image_stream(request: AnalyzeImageRequest):
                 textbook_refs.append({
                     "chapter": chunk.get("hierarchy_path", ""),
                     "pages": chunk.get("page_range", ""),
-                    "content": chunk.get("content", "")[:500] if chunk.get("content") else ""
+                    "content": chunk.get("content", "")[:500] if chunk.get("content") else "",
+                    "textbook_name": chunk.get("textbook_name", "")
                 })
 
             # Send initial data
@@ -347,7 +355,8 @@ async def analyze_image_stream(request: AnalyzeImageRequest):
 
 
 @router.post("/text-stream")
-async def analyze_text_stream(request: AnalyzeTextRequest):
+@limiter.limit("20/minute")
+async def analyze_text_stream(request: Request, body: AnalyzeTextRequest):
     """
     Stream analysis with GPT-5.2 teacher explanation.
 
@@ -358,12 +367,12 @@ async def analyze_text_stream(request: AnalyzeTextRequest):
         try:
             # Load chat history if conversation_id provided
             chat_history = []
-            if request.conversation_id:
+            if body.conversation_id:
                 try:
                     from src.database.db import get_session
                     from src.rag.chat_memory import load_chat_history
                     db = get_session()
-                    chat_history = load_chat_history(db, request.conversation_id, max_messages=6)
+                    chat_history = load_chat_history(db, body.conversation_id, max_messages=6)
                     db.close()
                 except Exception as e:
                     print(f"Failed to load chat history: {e}")
@@ -371,11 +380,11 @@ async def analyze_text_stream(request: AnalyzeTextRequest):
             # Step 1: Do RAG retrieval (non-streaming)
             graph = get_graph()
             result = await graph.analyze(
-                question_text=request.question_text,
-                user_grade=request.grade,
-                user_subject=request.subject,
-                is_exam_mode=request.is_exam_mode,
-                conversation_id=request.conversation_id
+                question_text=body.question_text,
+                user_grade=body.grade,
+                user_subject=body.subject,
+                is_exam_mode=body.is_exam_mode,
+                conversation_id=body.conversation_id
             )
 
             # Run QuestionAnalyzer for pre-solved question
@@ -383,7 +392,7 @@ async def analyze_text_stream(request: AnalyzeTextRequest):
             try:
                 from src.rag.question_analyzer import QuestionAnalyzer
                 analyzer = QuestionAnalyzer()
-                question_analysis = await analyzer.analyze(request.question_text)
+                question_analysis = await analyzer.analyze(body.question_text)
             except Exception:
                 pass
             
@@ -398,7 +407,8 @@ async def analyze_text_stream(request: AnalyzeTextRequest):
                 textbook_refs.append({
                     "chapter": chunk.get("hierarchy_path", ""),
                     "pages": chunk.get("page_range", ""),
-                    "content": chunk.get("content", "")[:500] if chunk.get("content") else ""
+                    "content": chunk.get("content", "")[:500] if chunk.get("content") else "",
+                    "textbook_name": chunk.get("textbook_name", "")
                 })
             
             # Send initial data
@@ -430,7 +440,7 @@ async def analyze_text_stream(request: AnalyzeTextRequest):
             synthesizer = TeacherSynthesizer()
 
             async for token in synthesizer.synthesize_stream(
-                question_text=request.question_text,
+                question_text=body.question_text,
                 matched_kazanimlar=matched_kazanimlar,
                 textbook_chunks=related_chunks,
                 question_analysis=question_analysis,
@@ -456,7 +466,8 @@ async def analyze_text_stream(request: AnalyzeTextRequest):
 
 
 @router.post("/stream")
-async def analyze_stream(request: AnalyzeTextRequest):
+@limiter.limit("20/minute")
+async def analyze_stream(request: Request, body: AnalyzeTextRequest):
     """
     Stream analysis events using Server-Sent Events.
     
@@ -467,10 +478,10 @@ async def analyze_stream(request: AnalyzeTextRequest):
             graph = get_graph()
             
             async for event in graph.stream_analysis(
-                question_text=request.question_text,
-                user_grade=request.grade,
-                user_subject=request.subject,
-                is_exam_mode=request.is_exam_mode
+                question_text=body.question_text,
+                user_grade=body.grade,
+                user_subject=body.subject,
+                is_exam_mode=body.is_exam_mode
             ):
                 # Format as SSE
                 event_data = {
@@ -496,8 +507,10 @@ async def analyze_stream(request: AnalyzeTextRequest):
 # ================== UNIFIED CHAT ENDPOINT ==================
 
 @router.post("/chat", response_model=ChatResponse)
+@limiter.limit("30/minute")
 async def chat(
-    request: ChatRequest,
+    request: Request,
+    body: ChatRequest,
     current_user: Optional[User] = Depends(get_optional_user)
 ):
     """
@@ -518,10 +531,10 @@ async def chat(
     manager = get_conversation_manager()
     supervisor = Supervisor()
 
-    session_id = request.session_id or str(uuid.uuid4())
+    session_id = body.session_id or str(uuid.uuid4())
     context = manager.get_context(session_id)
     has_context = context is not None
-    has_image = request.image_base64 is not None
+    has_image = body.image_base64 is not None
 
     # Get user_id for progress tracking
     user_id = current_user.id if current_user else None
@@ -530,7 +543,7 @@ async def chat(
     decision = supervisor.decide(
         has_image=has_image,
         has_context=has_context,
-        user_message=request.message
+        user_message=body.message
     )
 
     if decision.decision == RouteDecision.NEW_IMAGE_ANALYSIS:
@@ -541,25 +554,25 @@ async def chat(
             if has_image:
                 # Image analysis
                 result = await graph.analyze(
-                    question_image_base64=request.image_base64,
-                    user_grade=request.grade,
-                    user_subject=request.subject,
-                    is_exam_mode=request.is_exam_mode,
+                    question_image_base64=body.image_base64,
+                    user_grade=body.grade,
+                    user_subject=body.subject,
+                    is_exam_mode=body.is_exam_mode,
                     user_id=user_id,
                     conversation_id=session_id
                 )
             else:
                 # Text analysis
                 result = await graph.analyze(
-                    question_text=request.message or "",
-                    user_grade=request.grade,
-                    user_subject=request.subject,
-                    is_exam_mode=request.is_exam_mode,
+                    question_text=body.message or "",
+                    user_grade=body.grade,
+                    user_subject=body.subject,
+                    is_exam_mode=body.is_exam_mode,
                     user_id=user_id,
                     conversation_id=session_id
                 )
-            
-            question_text = result.get("question_text", request.message or "")
+
+            question_text = result.get("question_text", body.message or "")
             related_chunks = result.get("related_chunks", [])
             matched_kazanimlar = result.get("matched_kazanimlar", [])
             
@@ -591,16 +604,16 @@ async def chat(
             context = manager.update_context(
                 session_id=session_id,
                 question_text=question_text,
-                question_image_base64=request.image_base64,
+                question_image_base64=body.image_base64,
                 question_analysis=question_analysis,
                 matched_kazanimlar=matched_kazanimlar,
                 textbook_chunks=related_chunks,
                 teacher_explanation=teacher_explanation
             )
-            
+
             # Add to chat history
-            if request.message:
-                context.add_message("user", request.message)
+            if body.message:
+                context.add_message("user", body.message)
             context.add_message("assistant", teacher_explanation)
             
             processing_time = int((time.time() - start_time) * 1000)
@@ -634,13 +647,13 @@ async def chat(
         try:
             chatbot = FollowUpChatbot()
             response = await chatbot.chat(
-                user_question=request.message or "",
+                user_question=body.message or "",
                 context_summary=context.get_context_summary(),
                 chat_history=context.messages
             )
-            
+
             # Update chat history
-            context.add_message("user", request.message or "")
+            context.add_message("user", body.message or "")
             context.add_message("assistant", response)
             
             processing_time = int((time.time() - start_time) * 1000)

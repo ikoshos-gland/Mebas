@@ -9,6 +9,7 @@ import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Chat from './pages/Chat';
 import Settings from './pages/Settings';
+import Kazanimlar from './pages/Kazanimlar';
 import Pricing from './pages/Pricing';
 import ProfileComplete from './pages/ProfileComplete';
 import NotFound from './pages/NotFound';
@@ -48,6 +49,7 @@ function App() {
                 <Route path="/panel" element={<Dashboard />} />
                 <Route path="/sohbet" element={<Chat />} />
                 <Route path="/sohbet/:id" element={<Chat />} />
+                <Route path="/kazanimlar" element={<Kazanimlar />} />
                 <Route path="/ayarlar" element={<Settings />} />
               </Route>
 

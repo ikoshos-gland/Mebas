@@ -241,52 +241,84 @@ class ImageExtractor:
         return path
     
     async def generate_captions(
-        self, 
-        images: List[ExtractedImage]
+        self,
+        images: List[ExtractedImage],
+        parallel_limit: int = 5
     ) -> List[ExtractedImage]:
         """
-        Generate captions for images using GPT-4o Vision.
+        Generate captions for images using GPT-4o Vision (PARALLEL).
         Only processes images that passed the size filter.
-        
+
+        Args:
+            images: List of extracted images
+            parallel_limit: Max concurrent API calls (default: 5)
+
         COST OPTIMIZATION: Small/decorative images are already filtered out.
         """
+        import asyncio
+
         if not self.vision_client:
             return images
-        
-        for image in images:
-            if image.caption:
-                continue  # Already has caption from Azure
-            
-            try:
-                image_b64 = base64.b64encode(image.image_bytes).decode()
-                
-                response = await self.vision_client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[{
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url", 
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{image_b64}",
-                                    "detail": "high"
-                                }
-                            },
-                            {"type": "text", "text": self._get_caption_prompt()}
-                        ]
-                    }],
-                    max_tokens=500
-                )
-                
-                image.caption = response.choices[0].message.content
-                image.image_type = await self._classify_image_type(image_b64)
-                
-                print(f"      ✅ [Img {image.image_id}] p{image.page_number} ({image.width}x{image.height}) -> type: {image.image_type}")
-                print(f"         Caption: {image.caption[:100].replace(chr(10), ' ')}...")
-                
-            except Exception as e:
-                print(f"Caption generation error for {image.image_id}: {e}")
-        
+
+        # Filter images that need captioning
+        to_process = [img for img in images if not img.caption]
+
+        if not to_process:
+            return images
+
+        print(f"      🚀 Paralel caption üretimi: {len(to_process)} görsel, {parallel_limit} eşzamanlı")
+
+        # Semaphore to limit concurrent API calls
+        semaphore = asyncio.Semaphore(parallel_limit)
+        completed = {"count": 0}
+        total = len(to_process)
+
+        async def process_single_image(image: ExtractedImage):
+            async with semaphore:
+                try:
+                    image_b64 = base64.b64encode(image.image_bytes).decode()
+
+                    # Run caption and classification in parallel
+                    caption_task = self.vision_client.chat.completions.create(
+                        model="gpt-4o",
+                        messages=[{
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/png;base64,{image_b64}",
+                                        "detail": "high"
+                                    }
+                                },
+                                {"type": "text", "text": self._get_caption_prompt()}
+                            ]
+                        }],
+                        max_tokens=500
+                    )
+
+                    classify_task = self._classify_image_type(image_b64)
+
+                    # Wait for both
+                    caption_response, image_type = await asyncio.gather(
+                        caption_task, classify_task
+                    )
+
+                    image.caption = caption_response.choices[0].message.content
+                    image.image_type = image_type
+
+                    completed["count"] += 1
+                    print(f"      ✅ [{completed['count']}/{total}] [Img {image.image_id[:8]}] p{image.page_number} -> {image.image_type}")
+
+                except Exception as e:
+                    completed["count"] += 1
+                    print(f"      ❌ [{completed['count']}/{total}] Caption error {image.image_id[:8]}: {e}")
+
+        # Run all in parallel (semaphore limits concurrency)
+        await asyncio.gather(*[process_single_image(img) for img in to_process])
+
+        print(f"      ✅ Tüm caption'lar tamamlandı: {completed['count']}/{total}")
+
         return images
     
     def _get_caption_prompt(self) -> str:

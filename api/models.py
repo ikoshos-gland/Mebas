@@ -11,7 +11,11 @@ from datetime import datetime
 
 class AnalyzeImageRequest(BaseModel):
     """Request for image-based question analysis"""
-    image_base64: str = Field(..., description="Base64 encoded question image")
+    image_base64: str = Field(
+        ...,
+        description="Base64 encoded question image",
+        max_length=10_000_000  # ~7.5MB decoded limit to prevent DoS
+    )
     grade: Optional[int] = Field(None, ge=1, le=12, description="Student grade level")
     subject: Optional[str] = Field(None, description="Subject code (M, F, T...)")
     is_exam_mode: bool = Field(
@@ -148,8 +152,12 @@ class ErrorResponse(BaseModel):
 
 class ChatRequest(BaseModel):
     """Request for chat endpoint (unified interface)"""
-    message: Optional[str] = Field(None, description="User's text message")
-    image_base64: Optional[str] = Field(None, description="Base64 encoded image (optional)")
+    message: Optional[str] = Field(None, description="User's text message", max_length=10_000)
+    image_base64: Optional[str] = Field(
+        None,
+        description="Base64 encoded image (optional)",
+        max_length=10_000_000  # ~7.5MB decoded limit to prevent DoS
+    )
     session_id: Optional[str] = Field(None, description="Session ID for conversation continuity")
     grade: Optional[int] = Field(None, ge=1, le=12, description="Student grade level")
     subject: Optional[str] = Field(None, description="Subject code (M, F, T...)")
@@ -173,4 +181,73 @@ class ChatResponse(BaseModel):
     route: str = Field(..., description="Which route was taken: new_image_analysis or follow_up_chat")
     analysis_id: Optional[str] = Field(None, description="Analysis ID if new analysis was done")
     processing_time_ms: int = Field(0, description="Processing time")
+
+
+# ================== EXAM MODELS ==================
+
+class ExamGenerateRequest(BaseModel):
+    """Request for exam generation"""
+    title: str = Field(default="Çalışma Sınavı", max_length=200)
+    question_count: int = Field(default=10, ge=5, le=30)
+    difficulty_distribution: dict = Field(
+        default={"kolay": 0.3, "orta": 0.5, "zor": 0.2},
+        description="Zorluk dağılımı oranları (toplam 1.0 olmalı)"
+    )
+    kazanim_codes: Optional[List[str]] = Field(
+        None,
+        description="Spesifik kazanım kodları (None = kullanıcının takip ettikleri)"
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "title": "10. Sınıf Matematik Deneme",
+                "question_count": 15,
+                "difficulty_distribution": {"kolay": 0.2, "orta": 0.5, "zor": 0.3},
+                "kazanim_codes": ["MAT.10.1.1.1", "MAT.10.1.2.3"]
+            }
+        }
+    }
+
+
+class ExamQuestionDetail(BaseModel):
+    """Detail of a question in the exam"""
+    file: str
+    kazanim: str
+    difficulty: str
+    answer: Optional[str] = None
+
+
+class ExamGenerateResponse(BaseModel):
+    """Response for exam generation"""
+    exam_id: str = Field(..., description="Unique exam ID")
+    pdf_url: str = Field(..., description="Download URL for the PDF")
+    kazanimlar_covered: List[str] = Field(default_factory=list)
+    question_count: int
+    questions: List[ExamQuestionDetail] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    skipped_kazanimlar: List[str] = Field(
+        default_factory=list,
+        description="Soru bulunamayan ve atlanan kazanımlar"
+    )
+    warning: Optional[str] = Field(
+        None,
+        description="Uyarı mesajı (bazı kazanımlar atlandıysa)"
+    )
+
+
+class ExamListItem(BaseModel):
+    """Item in exam list"""
+    exam_id: str
+    title: str
+    question_count: int
+    kazanimlar_count: int
+    pdf_url: str
+    created_at: datetime
+
+
+class ExamListResponse(BaseModel):
+    """Response for listing exams"""
+    exams: List[ExamListItem] = Field(default_factory=list)
+    total: int = 0
 

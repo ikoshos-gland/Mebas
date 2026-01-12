@@ -284,17 +284,38 @@ def patched_search_client(mock_search_client):
 
 @pytest.fixture
 def test_db_session():
-    """Create a test database session."""
-    from src.database.db import init_db, get_session
+    """
+    Create a test database session with isolated SQLite.
+    Uses a named in-memory database with shared cache for connection sharing.
+    This fixture ensures all tables are created in a fresh database.
+    """
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from src.database.models import Base
 
-    # Initialize test database
-    init_db()
-    session = get_session()
+    # Use StaticPool to ensure the same connection is reused
+    # This is necessary because SQLite in-memory databases are connection-specific
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        echo=False
+    )
+
+    # Create all tables
+    Base.metadata.create_all(bind=engine)
+
+    # Create session bound to this engine
+    TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    session = TestSessionLocal()
 
     yield session
 
     # Cleanup
     session.close()
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
 
 
 # ================== Resilience Fixtures ==================
@@ -363,3 +384,438 @@ def create_mock_chunk(
         "textbook_name": "Test Kitabı",
         "grade": grade
     }
+
+
+# ================== FastAPI Test Client Fixtures ==================
+
+@pytest.fixture
+def test_client(test_db_session, patched_settings):
+    """
+    FastAPI TestClient with mocked dependencies.
+    Use for synchronous API endpoint testing.
+
+    NOTE: This fixture provides a basic test client with database override.
+    For authenticated tests, use mock_firebase_verify fixture alongside.
+    """
+    from fastapi.testclient import TestClient
+    from api.main import app
+    from src.database.db import get_db
+
+    # Override database dependency to use test session
+    def override_get_db():
+        try:
+            yield test_db_session
+        finally:
+            pass  # Don't close - let fixture handle it
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    # Disable lifespan to avoid Firebase/Graph initialization during tests
+    client = TestClient(app, raise_server_exceptions=False)
+    yield client
+
+    # Cleanup
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def authenticated_client(test_db_session, mock_firebase_token, patched_settings):
+    """
+    FastAPI TestClient with authentication pre-configured.
+    Returns (client, user) tuple for authenticated endpoint testing.
+    """
+    from fastapi.testclient import TestClient
+    from api.main import app
+    from src.database.db import get_db
+    from api.auth.deps import get_current_user, get_current_active_user
+    from src.database.models import User, Subscription
+
+    # Check if user already exists (idempotency)
+    existing = test_db_session.query(User).filter(
+        User.firebase_uid == mock_firebase_token["uid"]
+    ).first()
+
+    if existing:
+        test_user = existing
+    else:
+        # Create user in the test session
+        test_user = User(
+            firebase_uid=mock_firebase_token["uid"],
+            email=mock_firebase_token["email"],
+            full_name=mock_firebase_token["name"],
+            avatar_url=mock_firebase_token.get("picture"),
+            role="student",
+            grade=10,
+            is_active=True,
+            is_verified=True,
+            profile_complete=True
+        )
+        test_db_session.add(test_user)
+        test_db_session.flush()
+
+        # Create subscription
+        subscription = Subscription(
+            user_id=test_user.id,
+            plan="free",
+            questions_limit=10,
+            images_limit=0
+        )
+        test_db_session.add(subscription)
+        test_db_session.commit()
+        test_db_session.refresh(test_user)
+
+    # Override database - MUST use a generator that yields the SAME session
+    def override_get_db():
+        yield test_db_session
+
+    # Override auth to return test user directly
+    async def override_get_current_user():
+        return test_user
+
+    async def override_get_current_active_user():
+        return test_user
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_current_user] = override_get_current_user
+    app.dependency_overrides[get_current_active_user] = override_get_current_active_user
+
+    client = TestClient(app, raise_server_exceptions=False)
+    yield client, test_user, test_db_session
+
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+async def async_test_client(test_db_session, patched_settings):
+    """
+    Async HTTP client for testing streaming endpoints.
+    Use for async API endpoint testing.
+    """
+    from httpx import AsyncClient, ASGITransport
+    from api.main import app
+    from src.database.db import get_db
+
+    # Override database dependency
+    def override_get_db():
+        try:
+            yield test_db_session
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
+
+    app.dependency_overrides.clear()
+
+
+# ================== Firebase Mock Fixtures ==================
+
+@pytest.fixture
+def mock_firebase_token():
+    """Mock decoded Firebase ID token."""
+    return {
+        "uid": "test-firebase-uid-123",
+        "email": "test@example.com",
+        "email_verified": True,
+        "name": "Test User",
+        "picture": "https://example.com/avatar.jpg",
+        "firebase": {
+            "sign_in_provider": "password"
+        }
+    }
+
+
+@pytest.fixture
+def mock_firebase_verify(mock_firebase_token):
+    """
+    Patch Firebase token verification to return mock token.
+    Use this fixture to bypass Firebase authentication in tests.
+    Patches in both locations: where defined and where imported.
+    """
+    with patch('api.auth.firebase.verify_firebase_token', return_value=mock_firebase_token):
+        with patch('api.auth.deps.verify_firebase_token', return_value=mock_firebase_token):
+            with patch('api.auth.firebase.get_firebase_app', return_value=MagicMock()):
+                yield mock_firebase_token
+
+
+@pytest.fixture
+def mock_firebase_verify_expired():
+    """Mock Firebase verification that raises ExpiredIdTokenError."""
+    from firebase_admin.auth import ExpiredIdTokenError
+
+    with patch('api.auth.firebase.verify_firebase_token', side_effect=ExpiredIdTokenError("Token expired", None)):
+        with patch('api.auth.deps.verify_firebase_token', side_effect=ExpiredIdTokenError("Token expired", None)):
+            with patch('api.auth.firebase.get_firebase_app', return_value=MagicMock()):
+                yield
+
+
+@pytest.fixture
+def mock_firebase_verify_invalid():
+    """Mock Firebase verification that raises InvalidIdTokenError."""
+    from firebase_admin.auth import InvalidIdTokenError
+
+    with patch('api.auth.firebase.verify_firebase_token', side_effect=InvalidIdTokenError("Invalid token", None)):
+        with patch('api.auth.deps.verify_firebase_token', side_effect=InvalidIdTokenError("Invalid token", None)):
+            with patch('api.auth.firebase.get_firebase_app', return_value=MagicMock()):
+                yield
+
+
+# ================== Test User Fixtures ==================
+
+@pytest.fixture
+def test_user(test_db_session, mock_firebase_token):
+    """
+    Create a test user in the database with subscription.
+    Returns a fully set up user for authenticated endpoint testing.
+    """
+    from src.database.models import User, Subscription
+
+    # Check if user already exists (idempotency)
+    existing = test_db_session.query(User).filter(
+        User.firebase_uid == mock_firebase_token["uid"]
+    ).first()
+
+    if existing:
+        return existing
+
+    user = User(
+        firebase_uid=mock_firebase_token["uid"],
+        email=mock_firebase_token["email"],
+        full_name=mock_firebase_token["name"],
+        avatar_url=mock_firebase_token.get("picture"),
+        role="student",
+        grade=10,
+        is_active=True,
+        is_verified=True,
+        profile_complete=True
+    )
+    test_db_session.add(user)
+    test_db_session.flush()
+
+    # Create subscription
+    subscription = Subscription(
+        user_id=user.id,
+        plan="free",
+        questions_limit=10,
+        images_limit=0
+    )
+    test_db_session.add(subscription)
+    test_db_session.commit()
+    test_db_session.refresh(user)
+
+    return user
+
+
+@pytest.fixture
+def test_user_incomplete_profile(test_db_session):
+    """Create a test user with incomplete profile (no grade/role set)."""
+    from src.database.models import User, Subscription
+
+    user = User(
+        firebase_uid="incomplete-profile-uid",
+        email="incomplete@example.com",
+        full_name="Incomplete User",
+        role="student",
+        grade=None,
+        is_active=True,
+        is_verified=False,
+        profile_complete=False
+    )
+    test_db_session.add(user)
+    test_db_session.flush()
+
+    subscription = Subscription(
+        user_id=user.id,
+        plan="free",
+        questions_limit=10,
+        images_limit=0
+    )
+    test_db_session.add(subscription)
+    test_db_session.commit()
+    test_db_session.refresh(user)
+
+    return user
+
+
+@pytest.fixture
+def test_user_inactive(test_db_session):
+    """Create an inactive test user."""
+    from src.database.models import User, Subscription
+
+    user = User(
+        firebase_uid="inactive-user-uid",
+        email="inactive@example.com",
+        full_name="Inactive User",
+        role="student",
+        grade=10,
+        is_active=False,  # Inactive!
+        is_verified=True,
+        profile_complete=True
+    )
+    test_db_session.add(user)
+    test_db_session.flush()
+
+    subscription = Subscription(
+        user_id=user.id,
+        plan="free",
+        questions_limit=10,
+        images_limit=0
+    )
+    test_db_session.add(subscription)
+    test_db_session.commit()
+    test_db_session.refresh(user)
+
+    return user
+
+
+# ================== Auth Headers Fixture ==================
+
+@pytest.fixture
+def auth_headers():
+    """Authorization headers for authenticated requests."""
+    return {"Authorization": "Bearer mock-firebase-token"}
+
+
+# ================== Rate Limiter Mock ==================
+
+@pytest.fixture(autouse=False)
+def disable_rate_limiter():
+    """
+    Disable rate limiting in tests.
+    Use this fixture when testing endpoints with rate limits.
+    Note: Not autouse - enable explicitly when needed.
+    """
+    with patch('api.limiter.limiter.limit', return_value=lambda f: f):
+        yield
+
+
+# ================== RAG Graph Mock Fixtures ==================
+
+@pytest.fixture
+def mock_graph_analyze():
+    """Mock the RAG graph analyze method."""
+    mock_result = {
+        "analysis_id": "test-analysis-123",
+        "status": "success",
+        "question_text": "DNA'nin yapısını açıklayınız",
+        "matched_kazanimlar": [
+            {
+                "kazanim_code": "B.9.1.2.1",
+                "kazanim_description": "DNA'nın yapısını açıklar",
+                "score": 0.85,
+                "grade": 9,
+                "subject": "B"
+            }
+        ],
+        "related_chunks": [
+            {
+                "content": "DNA çift sarmal yapıda...",
+                "hierarchy_path": "Ünite 1 > Hücre > DNA",
+                "page_range": "45-48",
+                "textbook_name": "Biyoloji 9",
+                "grade": 9
+            }
+        ],
+        "prerequisite_gaps": [],
+        "response": {
+            "summary": "DNA çift sarmal yapıda bir moleküldür.",
+            "confidence": 0.9,
+            "solution_steps": ["Adım 1", "Adım 2"]
+        }
+    }
+
+    with patch('api.routes.analysis.get_graph') as mock_get_graph:
+        mock_graph = MagicMock()
+        mock_graph.analyze = AsyncMock(return_value=mock_result)
+        mock_get_graph.return_value = mock_graph
+        yield mock_result
+
+
+# ================== Conversation Fixtures ==================
+
+@pytest.fixture
+def test_conversation(test_db_session, test_user):
+    """Create a test conversation for the test user."""
+    from src.database.models import Conversation, Message
+    import uuid
+
+    conversation = Conversation(
+        id=str(uuid.uuid4()),
+        user_id=test_user.id,
+        title="Test Conversation",
+        subject="Biyoloji",
+        grade=10
+    )
+    test_db_session.add(conversation)
+    test_db_session.commit()
+    test_db_session.refresh(conversation)
+
+    return conversation
+
+
+@pytest.fixture
+def test_conversation_with_messages(test_db_session, test_conversation):
+    """Create a test conversation with sample messages."""
+    from src.database.models import Message
+
+    # Add user message
+    user_msg = Message(
+        conversation_id=test_conversation.id,
+        role="user",
+        content="DNA'nin yapısı nedir?"
+    )
+    test_db_session.add(user_msg)
+
+    # Add assistant message
+    assistant_msg = Message(
+        conversation_id=test_conversation.id,
+        role="assistant",
+        content="DNA çift sarmal yapıda bir moleküldür.",
+        analysis_id="test-analysis-123"
+    )
+    test_db_session.add(assistant_msg)
+
+    test_db_session.commit()
+    test_db_session.refresh(test_conversation)
+
+    return test_conversation
+
+
+# ================== Progress Fixtures ==================
+
+@pytest.fixture
+def test_kazanim_progress(test_db_session, test_user):
+    """Create test kazanim progress entries for the test user."""
+    from src.database.models import UserKazanimProgress
+
+    progress_entries = [
+        UserKazanimProgress(
+            user_id=test_user.id,
+            kazanim_code="B.9.1.2.1",
+            status="tracked",
+            initial_confidence_score=0.85
+        ),
+        UserKazanimProgress(
+            user_id=test_user.id,
+            kazanim_code="B.9.1.2.2",
+            status="in_progress",
+            initial_confidence_score=0.72
+        ),
+        UserKazanimProgress(
+            user_id=test_user.id,
+            kazanim_code="B.9.1.3.1",
+            status="understood",
+            initial_confidence_score=0.90,
+            understanding_confidence=0.95
+        )
+    ]
+
+    for entry in progress_entries:
+        test_db_session.add(entry)
+
+    test_db_session.commit()
+
+    return progress_entries

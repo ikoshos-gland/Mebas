@@ -19,6 +19,7 @@ psycopg2-binary>=2.9.9
 
 # PDF Processing - CRITICAL for Phase 2!
 pymupdf>=1.23.0
+reportlab>=4.0.0
 
 # Vision & API
 pillow>=10.0.0

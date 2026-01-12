@@ -19,8 +19,8 @@ import {
 } from 'lucide-react';
 import { ParticleBackground } from '../components/background/ParticleBackground';
 import { Header } from '../components/layout/Header';
-import { Card } from '../components/common';
-import { ChatSidebar } from '../components/chat';
+import { Card, MarkdownRenderer } from '../components/common';
+import { ChatSidebar, ExamGeneratorButton } from '../components/chat';
 import { useAuth } from '../context/AuthContext';
 import { grades, subjects, examModes, API_BASE_URL } from '../utils/theme';
 import { useConversations } from '../hooks/useConversations';
@@ -33,7 +33,7 @@ interface Message {
   image?: string;
   analysis?: {
     kazanimlar: Array<{ code: string; description: string; score: number }>;
-    textbookRefs: Array<{ chapter: string; pages: string }>;
+    textbookRefs: Array<{ chapter: string; pages: string; textbookName?: string }>;
     confidence: number;
     processingTime: number;
   };
@@ -95,10 +95,23 @@ const Chat = () => {
     }
   }, [messages]);
 
-  // Load existing conversation if conversationId is provided
+  // Load existing conversation or reset state for new chat
   useEffect(() => {
     const loadConversation = async () => {
-      if (!conversationId || !isAuthenticated) return;
+      // If no conversationId, reset state for new chat
+      if (!conversationId) {
+        setMessages([]);
+        setCurrentConversationId(null);
+        setIsLoadingConversation(false);
+        return;
+      }
+
+      // Skip reload if we just created this conversation (messages already in state)
+      if (currentConversationId === conversationId && messages.length > 0) {
+        return;
+      }
+
+      if (!isAuthenticated) return;
 
       setIsLoadingConversation(true);
       try {
@@ -108,7 +121,7 @@ const Chat = () => {
           // Convert conversation messages to local Message format
           const loadedMessages: Message[] = conversation.messages.map((msg) => ({
             id: String(msg.id),
-            role: msg.role,
+            role: msg.role as 'user' | 'assistant',
             content: msg.content,
             image: msg.image_url || undefined,
             analysis: msg.extra_data?.analysis as Message['analysis'],
@@ -391,9 +404,10 @@ const Chat = () => {
                   description: k.description,
                   score: k.score,
                 })),
-                textbookRefs: (data.textbook_references || []).map((c: { chapter: string; pages: string }) => ({
+                textbookRefs: (data.textbook_references || []).map((c: { chapter: string; pages: string; textbook_name?: string }) => ({
                   chapter: c.chapter || '',
                   pages: c.pages || '',
+                  textbookName: c.textbook_name || '',
                 })),
                 confidence: data.confidence || 0.85,
                 processingTime: 0,
@@ -528,7 +542,7 @@ const Chat = () => {
           ref={chatContainerRef}
           className="flex-1 overflow-y-auto w-full scroll-smooth"
         >
-          <div className="max-w-3xl mx-auto px-4 md:px-6 w-full pb-48 pt-10 flex flex-col gap-12">
+          <div className="max-w-5xl mx-auto px-4 md:px-6 w-full pb-48 pt-10 flex flex-col gap-12">
             {/* Loading conversation state */}
             {isLoadingConversation && (
               <div className="flex flex-col items-center justify-center min-h-[35vh] opacity-90 animate-enter">
@@ -619,9 +633,10 @@ const Chat = () => {
                               </span>
                             </div>
                           </div>
-                          <div className="prose prose-sm max-w-none font-sans leading-7 text-ink/90 whitespace-pre-wrap">
-                            {message.content}
-                          </div>
+                          <MarkdownRenderer
+                            content={message.content}
+                            className="prose prose-sm max-w-none font-sans"
+                          />
                         </div>
 
                         {/* Kazanımlar */}
@@ -637,12 +652,9 @@ const Chat = () => {
                                   key={k.code}
                                   className="bg-stone-50/60 rounded-lg p-4 border border-stone-200"
                                 >
-                                  <div className="flex items-start justify-between gap-3 mb-2">
+                                  <div className="flex items-start gap-3 mb-2">
                                     <span className="font-mono-custom text-xs font-semibold text-sepia bg-sepia/10 px-2 py-1 rounded">
                                       {k.code}
-                                    </span>
-                                    <span className="font-mono-custom text-[10px] text-neutral-400">
-                                      %{Math.round(k.score * 100)}
                                     </span>
                                   </div>
                                   <p className="text-sm text-ink/80 leading-relaxed">
@@ -667,6 +679,11 @@ const Chat = () => {
                                   key={i}
                                   className="bg-white rounded-lg p-3 border border-stone-200"
                                 >
+                                  {ref.textbookName && (
+                                    <div className="font-mono-custom text-[10px] text-sepia font-semibold mb-1.5 uppercase tracking-wider">
+                                      {ref.textbookName}
+                                    </div>
+                                  )}
                                   <div className="flex items-center justify-between">
                                     <span className="font-mono-custom text-xs font-medium text-ink">
                                       {ref.chapter}
@@ -720,7 +737,7 @@ const Chat = () => {
 
         {/* Input Area */}
         <div className="absolute bottom-0 left-0 right-0 z-40 bg-gradient-to-t from-canvas via-canvas/80 to-transparent pt-12 pb-8 md:pb-10">
-          <div className="max-w-3xl mx-auto px-4 md:px-6">
+          <div className="max-w-5xl mx-auto px-4 md:px-6">
             <div className="glass-input rounded-2xl p-2 pl-4 flex items-end gap-3 transition-all focus-within:ring-1 focus-within:ring-ink/10 relative overflow-hidden">
               <div className="absolute bottom-0 left-0 w-full h-[2px] bg-gradient-to-r from-transparent via-sepia/30 to-transparent opacity-50" />
 
@@ -933,6 +950,11 @@ const Chat = () => {
                   </span>
                 </div>
               </div>
+            </div>
+
+            {/* Exam Generator Button */}
+            <div className="pt-3 border-t border-stone-200">
+              <ExamGeneratorButton className="w-full" />
             </div>
           </div>
         </div>

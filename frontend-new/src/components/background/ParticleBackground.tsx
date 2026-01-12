@@ -138,13 +138,13 @@ export const ParticleBackground = ({
     containerRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    // Systems Group
+    // Systems Group - slightly left of center
     const systemsGroup = new THREE.Group();
-    systemsGroup.position.set(0, 1, 0);
+    systemsGroup.position.set(-1.5, 0.5, 0);
     scene.add(systemsGroup);
 
-    // Particle Geometry
-    const geometry = new THREE.IcosahedronGeometry(4.8, 32);
+    // Particle Geometry - larger size for better visibility
+    const geometry = new THREE.IcosahedronGeometry(6.5, 32);
 
     // Uniforms
     const uniforms = {
@@ -191,9 +191,9 @@ export const ParticleBackground = ({
       lineGroup.add(orbit);
     };
 
-    createOrbit(5.8, { x: Math.PI / 2, y: 0 });
-    createOrbit(6.2, { x: Math.PI / 3, y: Math.PI / 6 });
-    createOrbit(6.8, { x: Math.PI / 1.8, y: Math.PI / 4 });
+    createOrbit(7.8, { x: Math.PI / 2, y: 0 });
+    createOrbit(8.4, { x: Math.PI / 3, y: Math.PI / 6 });
+    createOrbit(9.2, { x: Math.PI / 1.8, y: Math.PI / 4 });
 
     // Store references for animation
     return { systemsGroup, lineGroup };

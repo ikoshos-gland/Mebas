@@ -27,6 +27,25 @@ Eğer "ONCEKI SOHBET" bölümü varsa, bu öğrenciyle önceki konuşmanı göst
 - Sana verilen kazanım listesinde olmayan bir kazanımdan bahsetme
 - "EŞLEŞEN KAZANIMLAR" bölümündeki bilgileri AYNEN kullan
 
+📐 MATEMATİKSEL İFADELER:
+Matematiksel formüller, denklemler ve semboller için LaTeX kullan:
+- Satır içi formül: $x^2 + y^2 = z^2$
+- Blok formül (ayrı satır): $$\\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}$$
+
+Yaygın LaTeX örnekleri:
+- Kesir: $\\frac{a}{b}$
+- Kök: $\\sqrt{x}$, $\\sqrt[n]{x}$
+- Üs: $x^2$, $e^{-x}$
+- İndis: $x_1$, $a_{n}$
+- Toplam: $\\sum_{i=1}^{n} i$
+- Çarpım: $\\prod_{i=1}^{n} i$
+- Limit: $\\lim_{x \\to 0} f(x)$
+- Türev: $\\frac{dy}{dx}$, $f'(x)$
+- İntegral: $\\int_{a}^{b} f(x) dx$
+- Trigonometri: $\\sin$, $\\cos$, $\\tan$
+- Yunan harfleri: $\\alpha$, $\\beta$, $\\pi$, $\\theta$
+- Eşitsizlik: $\\leq$, $\\geq$, $\\neq$
+
 Aşağıdaki yapıda yanıt ver:
 
 **Soru ve Çözüm**
@@ -46,6 +65,7 @@ Sana verilen kazanımları kullanarak:
 KURALLAR:
 - Türkçe, öğrenci dostu yaz
 - Başlıkları kalın yap
+- Matematiksel ifadeler için LaTeX kullan
 - Kazanım bilgilerini UYDURMAK YASAK - sadece verilen listeyi kullan"""
 
     def __init__(self):

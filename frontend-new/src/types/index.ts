@@ -119,6 +119,7 @@ export interface TextbookReference {
   chapter: string;
   pages?: string;
   content?: string;
+  textbookName?: string;
 }
 
 export interface PrerequisiteGap {
@@ -243,4 +244,59 @@ export interface TrackKazanimRequest {
 export interface MarkUnderstoodRequest {
   understanding_signals?: string[];
   understanding_confidence?: number;
+}
+
+// ================== EXAM GENERATOR TYPES ==================
+
+export interface ExamGenerateRequest {
+  title?: string;
+  question_count?: number;
+  difficulty_distribution?: {
+    kolay: number;
+    orta: number;
+    zor: number;
+  };
+  kazanim_codes?: string[];
+}
+
+export interface ExamQuestionDetail {
+  file: string;
+  kazanim: string;
+  difficulty: 'kolay' | 'orta' | 'zor';
+  answer?: string;
+}
+
+export interface ExamGenerateResponse {
+  exam_id: string;
+  pdf_url: string;
+  kazanimlar_covered: string[];
+  question_count: number;
+  questions: ExamQuestionDetail[];
+  created_at: string;
+  skipped_kazanimlar?: string[];
+  warning?: string;
+}
+
+export interface ExamListItem {
+  exam_id: string;
+  title: string;
+  question_count: number;
+  kazanimlar_count: number;
+  pdf_url: string;
+  created_at: string;
+}
+
+export interface ExamListResponse {
+  exams: ExamListItem[];
+  total: number;
+}
+
+export interface AvailableQuestionsStats {
+  kazanimlar: Array<{
+    code: string;
+    available_questions: number;
+  }>;
+  total_questions: number;
+  total_kazanimlar: number;
+  message?: string;
 }

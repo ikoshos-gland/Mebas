@@ -29,7 +29,7 @@ class Settings(BaseSettings):
 
     # ===== RAG Retrieval Settings =====
     rag_confidence_threshold: float = 0.50  # Lowered - blended scores tend to be low
-    rag_kazanim_top_k: int = 5  # Max kazanımlar to retrieve
+    rag_kazanim_top_k: int = 10  # Max kazanımlar to retrieve
     rag_textbook_top_k: int = 5  # Max textbook chunks (multiple grades)
 
     # ===== Hybrid Query Expansion Settings =====
@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     reranker_hard_cutoff: float = 0.25  # Filter out if LLM score below this
 
     # ===== Response Generator Settings =====
-    response_max_kazanimlar: int = 5
+    response_max_kazanimlar: int = 10
     response_max_textbook_sections: int = 5
     response_content_truncate: int = 800
 
@@ -99,6 +99,13 @@ class Settings(BaseSettings):
     llm_temperature_deterministic: float = 0.0
     llm_temperature_creative: float = 0.3
     llm_temperature_chat: float = 0.7
+
+    # ===== Exam Generator Settings =====
+    exam_output_dir: str = "data/generated_exams"
+    exam_questions_dir: str = "sorular"
+    exam_max_questions: int = 30
+    exam_default_count: int = 10
+    exam_font_path: str = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
     # Pydantic V2 Modern Config
     model_config = SettingsConfigDict(

@@ -48,6 +48,7 @@ const Dashboard = () => {
     understoodCount,
     trackedCount,
     inProgressCount,
+    refetch: refetchProgress,
   } = useProgress();
 
   // Get conversations data
@@ -214,7 +215,7 @@ const Dashboard = () => {
                         className="animate-enter"
                         style={{ animationDelay: `${(index + 1) * 0.1}s` }}
                       >
-                        <KazanimCard progress={item} />
+                        <KazanimCard progress={item} onStatusChange={refetchProgress} />
                       </div>
                     ))}
                     {progress.length > 5 && (
