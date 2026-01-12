@@ -226,22 +226,24 @@ const Chat = () => {
       const data = await response.json();
 
       // Transform API response to message format
+      // API returns: teacher_explanation, summary, matched_kazanimlar (with code, description, score)
+      // and textbook_references (with chapter, pages)
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: data.explanation || data.response || 'Yanıt alınamadı.',
+        content: data.teacher_explanation || data.summary || 'Yanıt alınamadı.',
         analysis: {
-          kazanimlar: (data.matched_kazanimlar || []).map((k: { kazanim_code: string; kazanim_description: string; score: number }) => ({
-            code: k.kazanim_code,
-            description: k.kazanim_description,
+          kazanimlar: (data.matched_kazanimlar || []).map((k: { code: string; description: string; score: number }) => ({
+            code: k.code,
+            description: k.description,
             score: k.score,
           })),
-          textbookRefs: (data.related_chunks || []).map((c: { hierarchy_path: string; page_range: string }) => ({
-            chapter: c.hierarchy_path,
-            pages: c.page_range,
+          textbookRefs: (data.textbook_references || []).map((c: { chapter: string; pages: string }) => ({
+            chapter: c.chapter || '',
+            pages: c.pages || '',
           })),
           confidence: data.confidence || 0.85,
-          processingTime: data.processing_time || 0,
+          processingTime: data.processing_time_ms ? data.processing_time_ms / 1000 : 0,
         },
       };
 
