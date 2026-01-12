@@ -40,14 +40,8 @@ class Settings(BaseSettings):
     # ===== Database =====
     database_url: str = "sqlite:///data/meb_rag.db"
 
-    # ===== JWT Authentication =====
-    jwt_secret_key: str = "change-me-in-production-use-strong-random-key"
-    jwt_algorithm: str = "HS256"
-    jwt_access_token_expire_minutes: int = 10080  # 7 days
-
-    # ===== Google OAuth =====
-    google_client_id: str = ""
-    google_client_secret: str = ""
+    # ===== Firebase Authentication =====
+    firebase_credentials_path: str = "firebase-service-account.json"
 
     # ===== Frontend URL (for CORS) =====
     frontend_url: str = "http://localhost:3000"
@@ -71,12 +65,13 @@ class Settings(BaseSettings):
     retrieval_max_description_length: int = 2500
     retrieval_weak_signal_threshold: float = 0.5
     retrieval_max_retries: int = 3
-    retrieval_min_kazanimlar: int = 3
+    retrieval_min_kazanimlar: int = 1  # Reduced - don't force bad results
 
     # ===== Reranker Settings =====
     reranker_max_items: int = 10
     reranker_truncate_length: int = 300
-    reranker_score_blend_ratio: float = 0.5
+    reranker_score_blend_ratio: float = 0.7  # Increased - trust LLM judgment more
+    reranker_hard_cutoff: float = 0.25  # Filter out if LLM score below this
 
     # ===== Response Generator Settings =====
     response_max_kazanimlar: int = 5

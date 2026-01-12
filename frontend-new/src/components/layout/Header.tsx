@@ -45,10 +45,10 @@ export const Header = ({ transparent = true }: HeaderProps) => {
 
           <div className="flex flex-col">
             <span className="font-serif-custom text-xl tracking-tight font-medium text-ink">
-              Meba
+              Yediiklim
             </span>
             <span className="font-mono-custom text-[9px] uppercase tracking-widest text-sepia">
-              Egitim AI
+              AI Asistan
             </span>
           </div>
         </Link>

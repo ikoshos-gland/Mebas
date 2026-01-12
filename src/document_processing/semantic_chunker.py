@@ -5,7 +5,7 @@ Creates semantic chunks from layout elements while
 preserving document hierarchy and separating sidebars.
 """
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 import uuid
 
 from src.document_processing.layout_analyzer import LayoutElement, ElementType
@@ -57,25 +57,41 @@ class SemanticChunker:
         sidebar_elements = [e for e in elements if e.is_sidebar]
         
         chunks = []
-        
-        # Chunk main content
+
+        # Chunk main content first
         main_chunks = self._chunk_main_content(main_elements)
         chunks.extend(main_chunks)
-        
-        # Create separate chunks for sidebars
-        sidebar_chunks = self._chunk_sidebars(sidebar_elements)
+
+        # Build page-to-hierarchy mapping from main chunks
+        page_hierarchy_map = {}
+        for chunk in main_chunks:
+            start, end = chunk.page_range
+            for p in range(start, end + 1):
+                if p not in page_hierarchy_map or chunk.hierarchy_path != "root":
+                    page_hierarchy_map[p] = chunk.hierarchy_path
+
+        # Create separate chunks for sidebars with inherited hierarchy
+        sidebar_chunks = self._chunk_sidebars(sidebar_elements, page_hierarchy_map)
         chunks.extend(sidebar_chunks)
-        
+
         return chunks
     
     def _chunk_main_content(self, elements: List[LayoutElement]) -> List[SemanticChunk]:
         """
         Chunk main content preserving hierarchy.
-        
+
         Breaks on section changes and respects max chunk size.
         """
         chunks = []
-        current_hierarchy = {"chapter": "", "section": "", "subsection": ""}
+
+        # Pre-scan for initial hierarchy (first chapter/unit title)
+        initial_hierarchy = {"chapter": "", "section": "", "subsection": ""}
+        for elem in elements:
+            if elem.element_type.value == "chapter_title":
+                initial_hierarchy["chapter"] = elem.content[:50]
+                break
+
+        current_hierarchy = initial_hierarchy.copy()
         current_group = []
         
         for elem in elements:
@@ -102,26 +118,35 @@ class SemanticChunker:
         
         return chunks
     
-    def _chunk_sidebars(self, elements: List[LayoutElement]) -> List[SemanticChunk]:
+    def _chunk_sidebars(
+        self,
+        elements: List[LayoutElement],
+        page_hierarchy_map: Dict[int, str]
+    ) -> List[SemanticChunk]:
         """
         Create separate chunks for sidebar content.
-        
+
         Each sidebar element becomes its own chunk tagged as [EK BİLGİ].
+        Inherits hierarchy from main content on the same page.
         """
         chunks = []
-        
+
         for elem in elements:
+            # Inherit hierarchy from main content on same page
+            inherited_hierarchy = page_hierarchy_map.get(elem.page_number, "root")
+            hierarchy_path = f"{inherited_hierarchy}/sidebar" if inherited_hierarchy != "root" else f"page_{elem.page_number}/sidebar"
+
             chunk = SemanticChunk(
                 chunk_id=self._generate_id(),
                 content=f"[EK BİLGİ]\n{elem.content}\n[/EK BİLGİ]",
                 chunk_type="sidebar",
-                hierarchy_path=f"page_{elem.page_number}/sidebar",
+                hierarchy_path=hierarchy_path,
                 page_range=(elem.page_number, elem.page_number),
                 is_sidebar_content=True,
                 metadata={"source": "sidebar", "page": elem.page_number}
             )
             chunks.append(chunk)
-        
+
         return chunks
     
     def _create_chunk(

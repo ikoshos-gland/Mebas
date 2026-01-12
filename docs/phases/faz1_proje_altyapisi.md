@@ -1,7 +1,7 @@
 # Faz 1: Proje Altyapısı ve Azure Kurulumu
 
 ## 🎯 Amaç
-MEB Eğitim RAG sisteminin temelini oluşturmak.
+Yediiklim Okulları Kişiselleştirilmiş Yapay Zeka Asistanı RAG sisteminin temelini oluşturmak.
 
 ---
 

@@ -1,16 +1,18 @@
 /**
- * Meba Application Types
+ * Yediiklim AI Asistan Application Types
  */
 
 // User Types
 export interface User {
   id: number;
+  firebase_uid: string;
   email: string;
   full_name: string;
   role: 'student' | 'teacher' | 'admin';
   grade?: number;
   avatar_url?: string;
   is_verified: boolean;
+  profile_complete: boolean;
   created_at: string;
 }
 
@@ -67,9 +69,32 @@ export interface Conversation {
   title: string;
   subject?: string;
   grade?: number;
+  is_archived?: boolean;
   created_at: string;
-  updated_at: string;
+  updated_at?: string;
   message_count?: number;
+}
+
+export interface ConversationListResponse {
+  items: Conversation[];
+  total: number;
+  page: number;
+  page_size: number;
+  has_more: boolean;
+}
+
+export interface ConversationMessage {
+  id: number;
+  role: 'user' | 'assistant';
+  content: string;
+  image_url?: string;
+  analysis_id?: string;
+  extra_data?: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ConversationWithMessages extends Conversation {
+  messages: ConversationMessage[];
 }
 
 export interface Message {

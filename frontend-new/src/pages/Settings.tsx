@@ -15,7 +15,7 @@ const tabs = [
 ];
 
 const Settings = () => {
-  const { user, updateUser, logout } = useAuth();
+  const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<TabId>('profile');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -58,8 +58,7 @@ const Settings = () => {
     setIsLoading(true);
     // Simulate API call
     await new Promise((resolve) => setTimeout(resolve, 1000));
-    updateUser({ full_name: fullName, grade: gradeValue });
-    // Also update localStorage
+    // Save grade to localStorage (full_name sync with backend not yet implemented)
     localStorage.setItem('meba_grade', String(gradeValue));
     setIsLoading(false);
   };

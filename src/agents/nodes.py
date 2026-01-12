@@ -13,23 +13,105 @@ from config.settings import get_settings
 settings = get_settings()
 
 
+def classify_message_type(text: str) -> str:
+    """
+    Classify message type using pattern matching.
+
+    Returns:
+        "academic_question" - Academic/educational question
+        "greeting" - Simple greeting/hello
+        "general_chat" - General conversation
+        "unclear" - Cannot determine
+    """
+    if not text:
+        return "unclear"
+
+    text_lower = text.lower().strip()
+
+    # Greeting patterns (Turkish + English)
+    greeting_patterns = [
+        "selam", "merhaba", "hey", "hi", "hello", "günaydın",
+        "iyi günler", "iyi akşamlar", "nasılsın", "naber",
+        "selamlar", "slm", "mrb", "sa", "as", "selamün aleyküm"
+    ]
+
+    # Check if message is ONLY a greeting (short message)
+    if len(text_lower.split()) <= 3:
+        for pattern in greeting_patterns:
+            if pattern in text_lower:
+                return "greeting"
+
+    # General chat patterns (non-academic)
+    chat_patterns = [
+        "teşekkür", "sağol", "eyvallah", "tamam", "ok", "anladım",
+        "görüşürüz", "bye", "hoşça kal", "iyi geceler", "kendine iyi bak"
+    ]
+
+    if len(text_lower.split()) <= 5:
+        for pattern in chat_patterns:
+            if pattern in text_lower:
+                return "general_chat"
+
+    # Academic question indicators
+    academic_indicators = [
+        "?",  # Question mark
+        "nasıl", "nedir", "ne demek", "açıkla", "anlat",
+        "hesapla", "bul", "çöz", "formül", "denklem",
+        "kaç", "kaçtır", "neden", "niçin", "hangi",
+        "örnek", "soru", "problem", "ödev", "ders",
+        "matematik", "fizik", "kimya", "biyoloji", "tarih",
+        "türkçe", "edebiyat", "geometri", "cebir"
+    ]
+
+    for indicator in academic_indicators:
+        if indicator in text_lower:
+            return "academic_question"
+
+    # If message is long enough, assume it's academic
+    if len(text_lower.split()) >= 5:
+        return "academic_question"
+
+    return "unclear"
+
+
 @log_node_execution("analyze_input")
 @with_timeout(settings.timeout_analyze_input)
 async def analyze_input(state: QuestionAnalysisState) -> Dict[str, Any]:
     """
     Node: Analyze input (text or image).
-    
-    If image is present, uses Vision API.
-    Otherwise just processes text.
-    
+
+    1. Classifies message type (greeting, academic, general_chat)
+    2. If image is present, uses Vision API
+    3. Otherwise processes text
+
     RETURNS: Partial state update, NOT full state!
     """
     from src.vision import QuestionAnalysisPipeline, QuestionAnalysisInput
-    
+
     result_update: Dict[str, Any] = {}
-    
+
+    # First, classify message type for text-only messages
+    question_text = state.get("question_text", "")
+    has_image = bool(state.get("question_image_base64"))
+
+    # If we have an image, it's definitely an academic question
+    if has_image:
+        message_type = "academic_question"
+    else:
+        message_type = classify_message_type(question_text)
+
+    result_update["message_type"] = message_type
+
+    # If not an academic question, skip heavy processing
+    if message_type in ("greeting", "general_chat"):
+        result_update.update({
+            "question_text": question_text,
+            "detected_topics": [],
+            "status": "chat_mode"
+        })
+        return result_update
+
     # Check if we have an image
-    
     if state.get("question_image_base64"):
         # Decode and analyze with Vision
         # Handle data URL format: strip "data:image/...;base64," prefix if present
@@ -346,16 +428,28 @@ async def rerank_results(state: QuestionAnalysisState) -> Dict[str, Any]:
             score_blend_ratio=settings.reranker_score_blend_ratio
         )
 
+        # If reranker filtered out everything (all results were irrelevant)
+        if not reranked:
+            print("[rerank_results] All results filtered by reranker - no relevant matches")
+            return {"matched_kazanimlar": []}
+
         # Filter by confidence threshold
         filtered = [
             k for k in reranked
             if k.get("blended_score", 0) >= settings.rag_confidence_threshold
         ]
 
-        # Ensure minimum kazanımlar are always returned for better context
-        if len(filtered) < settings.retrieval_min_kazanimlar and reranked:
-            filtered = reranked[:settings.retrieval_min_kazanimlar]
-        
+        # Only add back minimum if we have SOME good results
+        # Don't force bad results into the response
+        if not filtered and reranked:
+            # All below threshold - take best one only if it's reasonably close
+            best = reranked[0]
+            if best.get("blended_score", 0) >= settings.rag_confidence_threshold * 0.8:
+                filtered = [best]
+                print(f"[rerank_results] Using best match with borderline score: {best.get('blended_score', 0):.2f}")
+            else:
+                print(f"[rerank_results] Best match score too low: {best.get('blended_score', 0):.2f}")
+
         return {"matched_kazanimlar": filtered}
 
     except Exception as e:
@@ -618,6 +712,92 @@ async def find_prerequisite_gaps(state: QuestionAnalysisState) -> Dict[str, Any]
             return {"prerequisite_gaps": []}
 
 
+@log_node_execution("handle_chat")
+@with_timeout(15.0)
+async def handle_chat(state: QuestionAnalysisState) -> Dict[str, Any]:
+    """
+    Node: Handle non-academic messages (greetings, general chat).
+
+    Uses a simple LLM call to generate a friendly response without
+    the full RAG pipeline overhead.
+    """
+    from langchain_openai import AzureChatOpenAI
+    from config.settings import get_settings
+
+    settings = get_settings()
+    question_text = state.get("question_text", "")
+    message_type = state.get("message_type", "greeting")
+
+    # Simple responses for common patterns (no LLM needed)
+    simple_responses = {
+        "selam": "Merhaba! 👋 Size nasıl yardımcı olabilirim? Ders ile ilgili bir sorunuz varsa bana sorabilirsiniz.",
+        "merhaba": "Merhaba! 👋 Bugün hangi konuda yardımcı olabilirim?",
+        "sa": "Aleyküm selam! Nasıl yardımcı olabilirim?",
+        "as": "Aleyküm selam! Nasıl yardımcı olabilirim?",
+        "selamün aleyküm": "Aleyküm selam! Size nasıl yardımcı olabilirim?",
+        "günaydın": "Günaydın! Bugün hangi konuda çalışmak istersiniz?",
+        "iyi günler": "İyi günler! Size nasıl yardımcı olabilirim?",
+        "hey": "Merhaba! Bir sorunuz mu var?",
+        "naber": "İyiyim, teşekkürler! Sana nasıl yardımcı olabilirim?",
+        "nasılsın": "İyiyim, sorduğun için teşekkürler! Senin için ne yapabilirim?",
+    }
+
+    text_lower = question_text.lower().strip()
+
+    # Check for simple pattern match first
+    for pattern, response in simple_responses.items():
+        if pattern in text_lower:
+            return {
+                "response": {
+                    "message": response,
+                    "is_chat_response": True,
+                    "kazanimlar": []
+                },
+                "status": "success"
+            }
+
+    # For general chat or unclear messages, use LLM
+    try:
+        llm = AzureChatOpenAI(
+            azure_deployment=settings.azure_openai_deployment_chat,
+            api_version=settings.azure_openai_api_version,
+            temperature=0.7,
+            max_tokens=150
+        )
+
+        system_prompt = """Sen Yediiklim Okulları'nın yapay zeka asistanısın.
+Öğrencilere yardımcı, samimi ve destekleyici bir şekilde yanıt ver.
+Akademik sorular için öğrencileri soru sormaya teşvik et.
+Yanıtların kısa ve öz olsun."""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": question_text}
+        ]
+
+        response = await llm.ainvoke(messages)
+
+        return {
+            "response": {
+                "message": response.content,
+                "is_chat_response": True,
+                "kazanimlar": []
+            },
+            "status": "success"
+        }
+
+    except Exception as e:
+        # Fallback response if LLM fails
+        return {
+            "response": {
+                "message": "Merhaba! Size nasıl yardımcı olabilirim? Ders konularında sorularınızı bekliyorum.",
+                "is_chat_response": True,
+                "kazanimlar": []
+            },
+            "status": "success"
+        }
+
+
 @log_node_execution("handle_error")
 async def handle_error(state: QuestionAnalysisState) -> Dict[str, Any]:
     """
@@ -645,5 +825,6 @@ NODE_REGISTRY = {
     "find_prerequisite_gaps": find_prerequisite_gaps,
     "synthesize_interdisciplinary": synthesize_interdisciplinary,
     "generate_response": generate_response,
+    "handle_chat": handle_chat,
     "handle_error": handle_error
 }

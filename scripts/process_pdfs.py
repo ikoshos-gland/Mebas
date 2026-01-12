@@ -14,6 +14,7 @@ import sys
 import os
 import asyncio
 import glob
+import json
 import logging
 from pathlib import Path
 from dataclasses import asdict
@@ -42,6 +43,63 @@ import re
 import uuid
 from src.vector_store.question_generator import SyntheticQuestionGenerator
 
+
+# ============== PROCESSED FILES TRACKING ==============
+PROCESSED_STATE_FILE = Path("data/.processed_pdfs.json")
+
+
+def load_processed_files() -> dict:
+    """Load the set of already processed PDF files."""
+    if PROCESSED_STATE_FILE.exists():
+        try:
+            with open(PROCESSED_STATE_FILE, "r") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return {"kazanim": [], "kitap": []}
+    return {"kazanim": [], "kitap": []}
+
+
+def save_processed_file(pdf_path: Path, file_type: str):
+    """Mark a PDF as processed."""
+    state = load_processed_files()
+    pdf_key = str(pdf_path.absolute())
+
+    if file_type not in state:
+        state[file_type] = []
+
+    if pdf_key not in state[file_type]:
+        state[file_type].append(pdf_key)
+
+        # Ensure parent directory exists
+        PROCESSED_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(PROCESSED_STATE_FILE, "w") as f:
+            json.dump(state, f, indent=2)
+        print(f"   💾 Saved progress: {pdf_path.name}")
+
+
+def is_already_processed(pdf_path: Path, file_type: str) -> bool:
+    """Check if a PDF has already been processed."""
+    state = load_processed_files()
+    pdf_key = str(pdf_path.absolute())
+    return pdf_key in state.get(file_type, [])
+
+
+def clear_processed_state(mode: str = "all"):
+    """Clear processed files state based on mode."""
+    if mode == "all":
+        if PROCESSED_STATE_FILE.exists():
+            PROCESSED_STATE_FILE.unlink()
+            print("🗑️  Cleared ALL processed files state")
+    else:
+        state = load_processed_files()
+        if mode in state:
+            state[mode] = []
+            with open(PROCESSED_STATE_FILE, "w") as f:
+                json.dump(state, f, indent=2)
+            print(f"🗑️  Cleared {mode} processed files state")
+
+
 def parse_filename(filename: str) -> dict:
     """
     Parse filename to extract metadata.
@@ -49,10 +107,14 @@ def parse_filename(filename: str) -> dict:
     - subject_grade.pdf (e.g., biyoloji_9.pdf)
     - subject_grade.semester.pdf (e.g., biyoloji_9.1.pdf, biyoloji_10.2.pdf)
     """
+    import hashlib
+
     stem = Path(filename).stem  # e.g., "biyoloji_9.1" or "biyoloji_9"
-    
-    # Generate numeric textbook_id from hash (schema requires Int32)
-    textbook_id_hash = abs(hash(stem)) % (10**8)  # 8-digit positive integer
+
+    # Generate DETERMINISTIC numeric textbook_id using MD5
+    # Python's hash() is not deterministic across runs/systems!
+    md5_hash = hashlib.md5(stem.encode('utf-8')).hexdigest()
+    textbook_id_hash = int(md5_hash[:8], 16) % (10**8)  # 8-digit positive integer
     
     metadata = {
         "subject": "genel",
@@ -258,6 +320,8 @@ async def process_kazanim_pdf(
 
         pipeline.index_kazanimlar(q_dicts, generate_questions=False)  # Skip internal generation
 
+    # Mark as processed AFTER successful completion
+    save_processed_file(pdf_path, "kazanim")
     print(f"[OK] Completed Kazanim File: {pdf_path.name}")
 
 
@@ -329,7 +393,35 @@ async def process_single_pdf(
 
     # 5. Indexing
     print("   └─ Indexing to Azure AI Search...")
-    
+
+    # Helper: Extract chapter number from hierarchy_path
+    def extract_chapter_id(hierarchy_path: str) -> int:
+        """Extract chapter/unit number from hierarchy path like 'Ünite 1/Konu 2'"""
+        if not hierarchy_path:
+            return 0
+        import re
+        # Match patterns like "Ünite 1", "Bölüm 2", "Unit 3", "1. Ünite"
+        patterns = [
+            r'[Üü]nite\s*(\d+)',
+            r'[Bb]ölüm\s*(\d+)',
+            r'[Uu]nit\s*(\d+)',
+            r'^(\d+)\.\s*[Üü]nite',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, hierarchy_path, re.IGNORECASE)
+            if match:
+                return int(match.group(1))
+        return 0
+
+    # Build page-to-chunk mapping for linking images to chunks
+    page_to_chunks = {}
+    for chunk in chunks:
+        start_page, end_page = chunk.page_range
+        for page in range(start_page, end_page + 1):
+            if page not in page_to_chunks:
+                page_to_chunks[page] = []
+            page_to_chunks[page].append(chunk)
+
     # Prepare chunk dicts
     chunk_dicts = []
     for chunk in chunks:
@@ -341,29 +433,61 @@ async def process_single_pdf(
             "page_range": f"{chunk.page_range[0]}-{chunk.page_range[1]}",
             "is_sidebar": chunk.is_sidebar_content,
             "textbook_id": metadata["textbook_id"],
-            "textbook_name": metadata["textbook_name"],  # Kitap adı (örn: biyoloji_9)
+            "textbook_name": metadata["textbook_name"],
+            "chapter_id": extract_chapter_id(chunk.hierarchy_path),  # NEW: Extract chapter number
             "grade": metadata["grade"],
             "subject": metadata["subject"],
-            "semester": metadata["semester"],  # CRITICAL: Include semester for curriculum alignment
+            "semester": metadata["semester"],
         }
         chunk_dicts.append(c_dict)
 
-    # Prepare image dicts
+    # Prepare image dicts with chunk linkage
     image_dicts = []
     for img in images:
+        # Find the best matching chunk for this image based on page number
+        matching_chunks = page_to_chunks.get(img.page_number, [])
+
+        # Get the first non-sidebar chunk, or any chunk if none available
+        best_chunk = None
+        for c in matching_chunks:
+            if not c.is_sidebar_content:
+                best_chunk = c
+                break
+        if not best_chunk and matching_chunks:
+            best_chunk = matching_chunks[0]
+
+        # Extract related text (first 300 chars of matching chunk)
+        related_text = ""
+        chunk_id = ""
+        hierarchy_path = img.hierarchy_path or ""
+
+        if best_chunk:
+            chunk_id = best_chunk.chunk_id
+            hierarchy_path = best_chunk.hierarchy_path or hierarchy_path
+            # Get a preview of the related text (clean it up)
+            content_preview = best_chunk.content[:300].replace('\n', ' ').strip()
+            if len(best_chunk.content) > 300:
+                content_preview += "..."
+            related_text = content_preview
+
         i_dict = {
             "id": img.image_id,
             "caption": img.caption or "Görsel",
             "image_type": img.image_type or "unknown",
             "page_number": img.page_number,
-            "hierarchy_path": img.hierarchy_path, # Image extractor might not set this yet
+            "chunk_id": chunk_id,  # NEW: Link to chunk
+            "related_text": related_text,  # NEW: Context from chunk
+            "hierarchy_path": hierarchy_path,  # NEW: Inherit from chunk if not set
             "image_path": str(img.image_path) if img.image_path else "",
+            "width": img.width if hasattr(img, 'width') else 0,
+            "height": img.height if hasattr(img, 'height') else 0,
             "textbook_id": metadata["textbook_id"],
-             # Additional fields for image index if schema requires
             "grade": metadata["grade"],
             "subject": metadata["subject"]
         }
         image_dicts.append(i_dict)
+
+    print(f"   └─ Linked {sum(1 for i in image_dicts if i['chunk_id'])} images to chunks")
 
     # Convert sync methods to async run where necessary or run directly if pipeline supports it
     # ensure pipeline uses correct index names
@@ -375,7 +499,9 @@ async def process_single_pdf(
     # Index Images
     if image_dicts:
         pipeline.index_images(image_dicts)
-        
+
+    # Mark as processed AFTER successful completion
+    save_processed_file(pdf_path, "kitap")
     print(f"[OK] Completed Textbook: {pdf_path.name}")
 
 
@@ -439,7 +565,9 @@ async def main(process_mode: str = "all", reset: str = None):
     if reset:
         # Pass the reset mode (can be different from process_mode)
         pipeline.delete_indexes(reset)
-        
+        # Also clear the processed files state
+        clear_processed_state(reset)
+
     # Ensure indexes exist
     pipeline.create_all_indexes()
     
@@ -457,14 +585,37 @@ async def main(process_mode: str = "all", reset: str = None):
     if not pdf_files:
         print("⚠️  No PDF files found!")
         return
-    
-    # Process each PDF
+
+    # Check for already processed files
+    skipped_count = 0
+    to_process = []
+
     for pdf_file in pdf_files:
+        # Determine file type based on path or content
+        is_kazanim = "kazanim" in str(pdf_file).lower() or "kazanım" in str(pdf_file).lower()
+        file_type = "kazanim" if is_kazanim else "kitap"
+
+        if is_already_processed(pdf_file, file_type):
+            skipped_count += 1
+            print(f"⏭️  Skipping (already processed): {pdf_file.name}")
+        else:
+            to_process.append(pdf_file)
+
+    if skipped_count > 0:
+        print(f"\n📊 {skipped_count} dosya zaten işlenmiş, {len(to_process)} dosya işlenecek\n")
+
+    if not to_process:
+        print("✅ Tüm dosyalar zaten işlenmiş!")
+        return
+
+    # Process each PDF
+    for i, pdf_file in enumerate(to_process, 1):
+        print(f"\n[{i}/{len(to_process)}] Processing...")
         try:
             await process_single_pdf(
-                pdf_file, 
-                settings, 
-                doc_client, 
+                pdf_file,
+                settings,
+                doc_client,
                 vision_client,
                 pipeline
             )
@@ -472,6 +623,7 @@ async def main(process_mode: str = "all", reset: str = None):
             print(f"[ERROR] Error processing {pdf_file.name}: {e}")
             import traceback
             traceback.print_exc()
+            # Don't mark as processed if there was an error!
 
     print("\n[DONE] All processing completed!")
 

@@ -17,6 +17,7 @@ from src.agents.nodes import (
     retrieve_textbook,
     rerank_results,
     generate_response,
+    handle_chat,
     handle_error,
     NODE_REGISTRY
 )
@@ -56,6 +57,7 @@ __all__ = [
     "retrieve_textbook",
     "rerank_results",
     "generate_response",
+    "handle_chat",
     "handle_error",
     "NODE_REGISTRY",
     # Conditions

@@ -19,6 +19,13 @@ class QuestionAnalysisState(TypedDict, total=False):
     # ===== INPUT =====
     # Original question (text or extracted from image)
     question_text: str
+
+    # Message type classification
+    # "academic_question" → RAG pipeline
+    # "greeting" → Simple chat response
+    # "general_chat" → Simple chat response
+    # "unclear" → Ask for clarification
+    message_type: str
     
     # Image input (if question is an image)
     question_image_base64: Optional[str]
@@ -156,6 +163,7 @@ def create_initial_state(
     return {
         "question_text": question_text,
         "question_image_base64": question_image_base64,
+        "message_type": "",  # Will be set by analyze_input
         "user_grade": user_grade,
         "user_subject": user_subject,
         "is_exam_mode": is_exam_mode,

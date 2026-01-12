@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import {
   Target,
   Camera,
@@ -11,9 +11,10 @@ import {
   GraduationCap,
 } from 'lucide-react';
 import { ParticleBackground } from '../components/background/ParticleBackground';
-import { Button, Card } from '../components/common';
+import { Button, Card, FullPageLoading } from '../components/common';
 import { Header } from '../components/layout/Header';
 import { Footer } from '../components/layout/Footer';
+import { useAuth } from '../context/AuthContext';
 
 // Feature data
 const features = [
@@ -110,6 +111,23 @@ const faqItems = [
 ];
 
 const Landing = () => {
+  const { isAuthenticated, isLoading, user } = useAuth();
+
+  // Show loading while checking auth
+  if (isLoading) {
+    return <FullPageLoading text="Yukleniyor..." />;
+  }
+
+  // Redirect authenticated users to dashboard
+  if (isAuthenticated && user?.profile_complete) {
+    return <Navigate to="/panel" replace />;
+  }
+
+  // Redirect to profile completion if needed
+  if (isAuthenticated && user && !user.profile_complete) {
+    return <Navigate to="/profil-tamamla" replace />;
+  }
+
   return (
     <div className="min-h-screen bg-canvas relative overflow-hidden">
       {/* Background */}
@@ -131,7 +149,7 @@ const Landing = () => {
             </div>
 
             <h1 className="heading-display mb-6">
-              <span className="text-sepia">MEBA</span>
+              <span className="text-sepia">Yediiklim AI</span>
             </h1>
 
             <p className="text-lg md:text-xl text-neutral-600 font-light max-w-2xl mx-auto mb-8 leading-relaxed">
@@ -175,9 +193,9 @@ const Landing = () => {
       <section className="relative z-10 py-24 px-4">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-16 animate-enter">
-            <h2 className="heading-section mb-4">Neden Meba?</h2>
+            <h2 className="heading-section mb-4">Neden Yediiklim AI?</h2>
             <p className="text-neutral-600 max-w-2xl mx-auto">
-              Turk egitim sistemine ozel tasarlanmis, yapay zeka destekli ogrenme platformu.
+              Yediiklim Okullarina ozel tasarlanmis, kisisellestirilmis yapay zeka destekli ogrenme platformu.
             </p>
           </div>
 

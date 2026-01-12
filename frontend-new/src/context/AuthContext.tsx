@@ -1,3 +1,9 @@
+/**
+ * Authentication Context - Firebase Authentication
+ *
+ * Manages user authentication state using Firebase Auth.
+ * Syncs with backend for user profile data.
+ */
 import {
   createContext,
   useContext,
@@ -6,154 +12,213 @@ import {
   useCallback,
   type ReactNode,
 } from 'react';
-import type { User, AuthState, LoginCredentials, RegisterData, AuthResponse } from '../types';
+import {
+  type User as FirebaseUser,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signInWithPopup,
+  signOut,
+  onAuthStateChanged,
+  sendPasswordResetEmail,
+  updateProfile,
+} from 'firebase/auth';
+import { auth, googleProvider } from '../config/firebase';
+import type { User } from '../types';
 import { API_BASE_URL } from '../utils/theme';
 
+interface AuthState {
+  user: User | null;
+  firebaseUser: FirebaseUser | null;
+  isLoading: boolean;
+  isAuthenticated: boolean;
+}
+
 interface AuthContextValue extends AuthState {
-  login: (credentials: LoginCredentials) => Promise<void>;
-  register: (data: RegisterData) => Promise<void>;
-  loginWithGoogle: (credential: string) => Promise<void>;
-  logout: () => void;
-  updateUser: (user: Partial<User>) => void;
+  login: (email: string, password: string) => Promise<void>;
+  register: (email: string, password: string, displayName: string) => Promise<void>;
+  loginWithGoogle: () => Promise<void>;
+  logout: () => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
+  getIdToken: () => Promise<string | null>;
+  completeProfile: (data: { role: string; grade?: number; full_name?: string }) => Promise<void>;
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-const TOKEN_KEY = 'meba_token';
-const USER_KEY = 'meba_user';
-
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [state, setState] = useState<AuthState>({
-    user: null,
-    token: null,
-    isLoading: true,
-    isAuthenticated: false,
-  });
+  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  // Load auth state from localStorage on mount
-  useEffect(() => {
-    const token = localStorage.getItem(TOKEN_KEY);
-    const userStr = localStorage.getItem(USER_KEY);
+  /**
+   * Get current Firebase ID token
+   */
+  const getIdToken = useCallback(async (): Promise<string | null> => {
+    if (!firebaseUser) return null;
+    try {
+      return await firebaseUser.getIdToken();
+    } catch {
+      return null;
+    }
+  }, [firebaseUser]);
 
-    if (token && userStr) {
-      try {
-        const user = JSON.parse(userStr) as User;
-        setState({
-          user,
-          token,
-          isLoading: false,
-          isAuthenticated: true,
-        });
-      } catch {
-        // Invalid stored data
-        localStorage.removeItem(TOKEN_KEY);
-        localStorage.removeItem(USER_KEY);
-        setState((prev) => ({ ...prev, isLoading: false }));
+  /**
+   * Fetch user profile from backend
+   */
+  const fetchUserProfile = useCallback(async (fbUser: FirebaseUser): Promise<User | null> => {
+    try {
+      const idToken = await fbUser.getIdToken();
+      const response = await fetch(`${API_BASE_URL}/auth/me`, {
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (response.ok) {
+        return await response.json();
       }
-    } else {
-      setState((prev) => ({ ...prev, isLoading: false }));
+
+      // If 401, token might be invalid
+      if (response.status === 401) {
+        console.warn('Backend rejected token, signing out');
+        await signOut(auth);
+        return null;
+      }
+
+      console.error('Failed to fetch user profile:', response.status);
+      return null;
+    } catch (error) {
+      console.error('Error fetching user profile:', error);
+      return null;
     }
   }, []);
 
-  // Save auth state to localStorage
-  const saveAuth = useCallback((token: string, user: User) => {
-    localStorage.setItem(TOKEN_KEY, token);
-    localStorage.setItem(USER_KEY, JSON.stringify(user));
-    setState({
-      user,
-      token,
-      isLoading: false,
-      isAuthenticated: true,
+  /**
+   * Refresh user data from backend
+   */
+  const refreshUser = useCallback(async () => {
+    if (!firebaseUser) return;
+    const userData = await fetchUserProfile(firebaseUser);
+    if (userData) {
+      setUser(userData);
+    }
+  }, [firebaseUser, fetchUserProfile]);
+
+  /**
+   * Listen to Firebase auth state changes
+   */
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+      setFirebaseUser(fbUser);
+
+      if (fbUser) {
+        const userData = await fetchUserProfile(fbUser);
+        setUser(userData);
+      } else {
+        setUser(null);
+      }
+
+      setIsLoading(false);
     });
+
+    return () => unsubscribe();
+  }, [fetchUserProfile]);
+
+  /**
+   * Login with email/password
+   */
+  const login = useCallback(async (email: string, password: string) => {
+    const result = await signInWithEmailAndPassword(auth, email, password);
+    const userData = await fetchUserProfile(result.user);
+    setUser(userData);
+  }, [fetchUserProfile]);
+
+  /**
+   * Register with email/password
+   */
+  const register = useCallback(
+    async (email: string, password: string, displayName: string) => {
+      const result = await createUserWithEmailAndPassword(auth, email, password);
+
+      // Update display name in Firebase
+      await updateProfile(result.user, { displayName });
+
+      // Fetch user profile (will be auto-created by backend)
+      const userData = await fetchUserProfile(result.user);
+      setUser(userData);
+    },
+    [fetchUserProfile]
+  );
+
+  /**
+   * Login with Google
+   */
+  const loginWithGoogle = useCallback(async () => {
+    const result = await signInWithPopup(auth, googleProvider);
+    const userData = await fetchUserProfile(result.user);
+    setUser(userData);
+  }, [fetchUserProfile]);
+
+  /**
+   * Logout
+   */
+  const logout = useCallback(async () => {
+    await signOut(auth);
+    setUser(null);
   }, []);
 
-  // Clear auth state
-  const clearAuth = useCallback(() => {
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(USER_KEY);
-    setState({
-      user: null,
-      token: null,
-      isLoading: false,
-      isAuthenticated: false,
-    });
+  /**
+   * Reset password
+   */
+  const resetPassword = useCallback(async (email: string) => {
+    await sendPasswordResetEmail(auth, email);
   }, []);
 
-  // Login with email/password
-  const login = useCallback(async (credentials: LoginCredentials) => {
-    const response = await fetch(`${API_BASE_URL}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(credentials),
-    });
+  /**
+   * Complete profile (for first-time users)
+   */
+  const completeProfile = useCallback(
+    async (data: { role: string; grade?: number; full_name?: string }) => {
+      if (!firebaseUser) throw new Error('Oturum acilmamis');
 
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || 'Giris basarisiz');
-    }
+      const idToken = await firebaseUser.getIdToken();
+      const response = await fetch(`${API_BASE_URL}/auth/complete-profile`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
+      });
 
-    const data: AuthResponse = await response.json();
-    saveAuth(data.access_token, data.user);
-  }, [saveAuth]);
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Profil tamamlanamadi');
+      }
 
-  // Register with email/password
-  const register = useCallback(async (data: RegisterData) => {
-    const response = await fetch(`${API_BASE_URL}/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || 'Kayit basarisiz');
-    }
-
-    const result: AuthResponse = await response.json();
-    saveAuth(result.access_token, result.user);
-  }, [saveAuth]);
-
-  // Login with Google OAuth
-  const loginWithGoogle = useCallback(async (credential: string) => {
-    const response = await fetch(`${API_BASE_URL}/auth/google`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ credential }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || 'Google ile giris basarisiz');
-    }
-
-    const data: AuthResponse = await response.json();
-    saveAuth(data.access_token, data.user);
-  }, [saveAuth]);
-
-  // Logout
-  const logout = useCallback(() => {
-    clearAuth();
-  }, [clearAuth]);
-
-  // Update user profile
-  const updateUser = useCallback((updates: Partial<User>) => {
-    setState((prev) => {
-      if (!prev.user) return prev;
-      const updatedUser = { ...prev.user, ...updates };
-      localStorage.setItem(USER_KEY, JSON.stringify(updatedUser));
-      return { ...prev, user: updatedUser };
-    });
-  }, []);
+      const userData = await response.json();
+      setUser(userData);
+    },
+    [firebaseUser]
+  );
 
   return (
     <AuthContext.Provider
       value={{
-        ...state,
+        user,
+        firebaseUser,
+        isLoading,
+        isAuthenticated: !!user,
         login,
         register,
         loginWithGoogle,
         logout,
-        updateUser,
+        resetPassword,
+        getIdToken,
+        completeProfile,
+        refreshUser,
       }}
     >
       {children}
@@ -161,7 +226,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   );
 };
 
-// Hook
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (!context) {

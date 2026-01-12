@@ -16,12 +16,12 @@ Base = declarative_base()
 # ================== KULLANICI VE ABONELİK ==================
 
 class User(Base):
-    """Kullanıcı modeli - Öğrenci, Öğretmen, Admin"""
+    """Kullanıcı modeli - Firebase Authentication ile"""
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True)
+    firebase_uid = Column(String(128), unique=True, index=True, nullable=False)
     email = Column(String(255), unique=True, index=True, nullable=False)
-    hashed_password = Column(String(255), nullable=True)  # Null for OAuth users
     full_name = Column(String(100), nullable=False)
     avatar_url = Column(String(512), nullable=True)
 
@@ -29,12 +29,12 @@ class User(Base):
     role = Column(String(20), default="student")  # student, teacher, admin
     grade = Column(Integer, nullable=True)  # 1-12, null for teachers
 
-    # OAuth
-    google_id = Column(String(255), nullable=True, unique=True, index=True)
+    # Profil durumu (Firebase login sonrası rol/sınıf seçimi)
+    profile_complete = Column(Boolean, default=False)
 
     # Durum
     is_active = Column(Boolean, default=True)
-    is_verified = Column(Boolean, default=False)
+    is_verified = Column(Boolean, default=False)  # Firebase email_verified ile senkronize
 
     # Tercihler (JSON)
     preferences = Column(JSON, default=dict)

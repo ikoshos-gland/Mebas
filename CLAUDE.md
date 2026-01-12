@@ -4,7 +4,7 @@ Guidance for Claude Code when working with this repository.
 
 ## Project Overview
 
-Meba is an AI-powered educational platform for personalized tutoring aligned with the Turkish Ministry of National Education (MEB) curriculum. It uses RAG (Retrieval-Augmented Generation) with LangGraph state machines to provide pedagogically-correct responses grounded in official textbooks and kazanımlar (learning objectives).
+Yediiklim Okulları Kişiselleştirilmiş Yapay Zeka Asistanı - MEB müfredatıyla uyumlu, kişiselleştirilmiş öğretim için yapay zeka destekli eğitim platformu. It uses RAG (Retrieval-Augmented Generation) with LangGraph state machines to provide pedagogically-correct responses grounded in official textbooks and kazanımlar (learning objectives).
 
 **Stack:** Python 3.11 + FastAPI + LangGraph + React 19 + Azure AI Services
 

@@ -47,10 +47,13 @@ Bu soruyu analiz et ve AŞAĞIDAKİ YAPIDA BİR ÇIKIŞ ÜRET. 'solution_steps' 
 ZORUNLU ADIMLAR:
 1. [ÖNEMLİ] Soruyu adım adım çöz ve her mantıksal adımı 'solution_steps' listesine ekle. En az 3 adım olmalı.
 2. [ÖNEMLİ] Sorunun net cevabını 'final_answer' alanına yaz (Örn: "D şıkkı, 20").
-3. Eşleşen kazanımları seç ve HER KAZANIM İÇİN neden eşleştiğini 'match_reason' alanında açıkla (1-2 cümle).
-4. Ön koşul eksikliği varsa belirt.
-5. Öğrenci için motive edici bir özet yaz.
-6. Ders kitabı referanslarını tam hiyerarşi ile belirt (Kitap > Ünite > Konu > Sayfa).
+3. [KRİTİK] VERİLEN TÜM KAZANIMLARI 'matched_kazanimlar' listesine dahil et! Hiçbirini atlama!
+   - DOĞRUDAN EŞLEŞMELER → match_type: "primary" olarak işaretle
+   - ALTERNATİF/DOLAYLI KAZANIMLAR → match_type: "alternative" olarak işaretle
+4. HER KAZANIM İÇİN neden eşleştiğini 'match_reason' alanında açıkla (1-2 cümle).
+5. Ön koşul eksikliği varsa belirt.
+6. Öğrenci için motive edici bir özet yaz.
+7. Ders kitabı referanslarını tam hiyerarşi ile belirt (Kitap > Ünite > Konu > Sayfa).
 
 EŞLEŞME NEDENİ FORMATI:
 Her kazanım için match_reason alanı şu formatta olmalı:
@@ -251,7 +254,7 @@ Eğer soru çözülemiyorsa, solution_steps alanına "Soruyu çözmek için yete
                 title = k.get("kazanim_title", "")
                 desc = k.get("kazanim_description", "")
                 grade = k.get("grade", "?")
-                kazanim_text += f"- [{code}] (Sınıf {grade}) {title or desc[:80]}...\n"
+                kazanim_text += f"- [{code}] (Sınıf {grade}) {title or desc}\n"
 
         # Format textbook sections - WITH FULL HIERARCHY
         max_sections = self.settings.response_max_textbook_sections

@@ -15,10 +15,10 @@ export const Footer = () => {
                 <div className="absolute w-full h-[0.5px] bg-paper rotate-45" />
                 <div className="absolute w-full h-[0.5px] bg-paper -rotate-45" />
               </div>
-              <span className="font-serif-custom text-xl text-paper">Meba</span>
+              <span className="font-serif-custom text-xl text-paper">Yediiklim</span>
             </Link>
             <p className="text-sm text-paper/60 mb-4">
-              MEB mufredatina uyumlu, yapay zeka destekli egitim platformu.
+              Yediiklim Okullari Kisisellestirilmis Yapay Zeka Asistani
             </p>
             <div className="flex items-center gap-3">
               <a href="#" className="p-2 hover:bg-paper/10 rounded-lg transition-colors">
@@ -30,7 +30,7 @@ export const Footer = () => {
               <a href="#" className="p-2 hover:bg-paper/10 rounded-lg transition-colors">
                 <Github className="w-4 h-4" />
               </a>
-              <a href="mailto:destek@meba.edu.tr" className="p-2 hover:bg-paper/10 rounded-lg transition-colors">
+              <a href="mailto:destek@yediiklim.edu.tr" className="p-2 hover:bg-paper/10 rounded-lg transition-colors">
                 <Mail className="w-4 h-4" />
               </a>
             </div>
@@ -77,7 +77,7 @@ export const Footer = () => {
                 </a>
               </li>
               <li>
-                <a href="mailto:destek@meba.edu.tr" className="text-sm hover:text-paper transition-colors">
+                <a href="mailto:destek@yediiklim.edu.tr" className="text-sm hover:text-paper transition-colors">
                   Iletisim
                 </a>
               </li>
@@ -117,7 +117,7 @@ export const Footer = () => {
         {/* Bottom Bar */}
         <div className="pt-8 border-t border-paper/10 flex flex-col md:flex-row justify-between items-center gap-4">
           <p className="text-xs text-paper/40">
-            &copy; {currentYear} Meba. Tum haklari saklidir.
+            &copy; {currentYear} Yediiklim Okullari. Tum haklari saklidir.
           </p>
           <p className="text-xs text-paper/40">
             <span className="font-mono-custom">GPT-5.2</span> ve{' '}

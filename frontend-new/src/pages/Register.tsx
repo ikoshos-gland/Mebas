@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, Navigate } from 'react-router-dom';
 import { Mail, Lock, User, AlertCircle, GraduationCap } from 'lucide-react';
+import { FirebaseError } from 'firebase/app';
 import { ParticleBackground } from '../components/background/ParticleBackground';
-import { Button, Input, Card } from '../components/common';
+import { Button, Input, Card, FullPageLoading } from '../components/common';
 import { useAuth } from '../context/AuthContext';
 import { grades } from '../utils/theme';
 
@@ -11,8 +12,9 @@ type Role = 'student' | 'teacher';
 
 const Register = () => {
   const navigate = useNavigate();
-  const { register } = useAuth();
+  const { register, loginWithGoogle, completeProfile, user, isAuthenticated, isLoading: isAuthLoading } = useAuth();
 
+  // All hooks must be called before any conditional returns
   const [step, setStep] = useState<Step>(1);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -23,6 +25,35 @@ const Register = () => {
   const [acceptTerms, setAcceptTerms] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+
+  // Redirect if already authenticated
+  if (isAuthLoading) {
+    return <FullPageLoading text="Kontrol ediliyor..." />;
+  }
+
+  if (isAuthenticated && user?.profile_complete) {
+    return <Navigate to="/panel" replace />;
+  }
+
+  if (isAuthenticated && user && !user.profile_complete) {
+    return <Navigate to="/profil-tamamla" replace />;
+  }
+
+  const getFirebaseErrorMessage = (error: FirebaseError): string => {
+    switch (error.code) {
+      case 'auth/email-already-in-use':
+        return 'Bu e-posta adresi zaten kullaniliyor';
+      case 'auth/invalid-email':
+        return 'Gecersiz e-posta adresi';
+      case 'auth/weak-password':
+        return 'Sifre cok zayif. En az 6 karakter kullanin.';
+      case 'auth/network-request-failed':
+        return 'Baglanti hatasi. Internet baglantinizi kontrol edin.';
+      default:
+        return 'Kayit basarisiz. Lutfen tekrar deneyin.';
+    }
+  };
 
   const handleStep1Submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,8 +64,8 @@ const Register = () => {
       return;
     }
 
-    if (password.length < 8) {
-      setError('Sifre en az 8 karakter olmali');
+    if (password.length < 6) {
+      setError('Sifre en az 6 karakter olmali');
       return;
     }
 
@@ -53,24 +84,58 @@ const Register = () => {
     setIsLoading(true);
 
     try {
-      await register({
-        email,
-        password,
-        full_name: fullName,
+      // Register with Firebase
+      await register(email, password, fullName);
+
+      // Complete profile with role and grade
+      await completeProfile({
         role,
         grade: role === 'student' ? grade : undefined,
+        full_name: fullName,
       });
+
       navigate('/panel');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Kayit basarisiz');
+      if (err instanceof FirebaseError) {
+        setError(getFirebaseErrorMessage(err));
+      } else if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError('Kayit basarisiz');
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleGoogleRegister = async () => {
-    // TODO: Implement Google OAuth
-    setError('Google ile kayit henuz hazir degil');
+    setError('');
+    setIsGoogleLoading(true);
+
+    try {
+      await loginWithGoogle();
+      // Google users need to complete their profile
+      navigate('/profil-tamamla');
+    } catch (err) {
+      if (err instanceof FirebaseError) {
+        // User closed popup - not an error
+        if (err.code === 'auth/popup-closed-by-user') {
+          setIsGoogleLoading(false);
+          return;
+        }
+        if (err.code === 'auth/cancelled-popup-request') {
+          setIsGoogleLoading(false);
+          return;
+        }
+        setError(getFirebaseErrorMessage(err));
+      } else if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError('Google ile kayit basarisiz');
+      }
+    } finally {
+      setIsGoogleLoading(false);
+    }
   };
 
   return (
@@ -85,7 +150,7 @@ const Register = () => {
               <div className="absolute w-full h-[0.5px] bg-ink rotate-45" />
               <div className="absolute w-full h-[0.5px] bg-ink -rotate-45" />
             </div>
-            <span className="font-serif-custom text-2xl text-ink">Meba</span>
+            <span className="font-serif-custom text-2xl text-ink">Yediiklim</span>
           </Link>
         </div>
 
@@ -120,17 +185,19 @@ const Register = () => {
                 onChange={(e) => setEmail(e.target.value)}
                 leftIcon={<Mail className="w-4 h-4" />}
                 required
+                disabled={isGoogleLoading}
               />
 
               <Input
                 label="Sifre"
                 type="password"
-                placeholder="En az 8 karakter"
+                placeholder="En az 6 karakter"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 leftIcon={<Lock className="w-4 h-4" />}
-                hint="En az 8 karakter olmali"
+                hint="En az 6 karakter olmali"
                 required
+                disabled={isGoogleLoading}
               />
 
               <Input
@@ -141,9 +208,10 @@ const Register = () => {
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 leftIcon={<Lock className="w-4 h-4" />}
                 required
+                disabled={isGoogleLoading}
               />
 
-              <Button type="submit" className="w-full">
+              <Button type="submit" className="w-full" disabled={isGoogleLoading}>
                 Devam Et
               </Button>
             </form>
@@ -157,6 +225,7 @@ const Register = () => {
                 onChange={(e) => setFullName(e.target.value)}
                 leftIcon={<User className="w-4 h-4" />}
                 required
+                disabled={isLoading}
               />
 
               {/* Role Selection */}
@@ -168,12 +237,14 @@ const Register = () => {
                   <button
                     type="button"
                     onClick={() => setRole('student')}
+                    disabled={isLoading}
                     className={`
                       p-4 rounded-xl border-2 transition-all text-center
                       ${role === 'student'
                         ? 'border-sepia bg-sepia/5'
                         : 'border-stone-200 hover:border-stone-300'
                       }
+                      ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}
                     `}
                   >
                     <GraduationCap className={`w-6 h-6 mx-auto mb-2 ${role === 'student' ? 'text-sepia' : 'text-neutral-400'}`} />
@@ -185,12 +256,14 @@ const Register = () => {
                   <button
                     type="button"
                     onClick={() => setRole('teacher')}
+                    disabled={isLoading}
                     className={`
                       p-4 rounded-xl border-2 transition-all text-center
                       ${role === 'teacher'
                         ? 'border-sepia bg-sepia/5'
                         : 'border-stone-200 hover:border-stone-300'
                       }
+                      ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}
                     `}
                   >
                     <User className={`w-6 h-6 mx-auto mb-2 ${role === 'teacher' ? 'text-sepia' : 'text-neutral-400'}`} />
@@ -211,7 +284,8 @@ const Register = () => {
                     <select
                       value={grade}
                       onChange={(e) => setGrade(Number(e.target.value))}
-                      className="w-full appearance-none bg-paper border border-stone-200 text-ink text-sm font-sans p-3 rounded-xl hover:border-ink/30 focus:outline-none focus:border-sepia transition-colors cursor-pointer"
+                      disabled={isLoading}
+                      className="w-full appearance-none bg-paper border border-stone-200 text-ink text-sm font-sans p-3 rounded-xl hover:border-ink/30 focus:outline-none focus:border-sepia transition-colors cursor-pointer disabled:opacity-50"
                     >
                       {grades.map((g) => (
                         <option key={g.value} value={g.value}>
@@ -229,6 +303,7 @@ const Register = () => {
                   type="checkbox"
                   checked={acceptTerms}
                   onChange={(e) => setAcceptTerms(e.target.checked)}
+                  disabled={isLoading}
                   className="w-4 h-4 mt-0.5 rounded border-stone-300 text-sepia focus:ring-sepia"
                 />
                 <span className="text-sm text-neutral-600">
@@ -249,6 +324,7 @@ const Register = () => {
                   variant="secondary"
                   onClick={() => setStep(1)}
                   className="flex-1"
+                  disabled={isLoading}
                 >
                   Geri
                 </Button>
@@ -274,6 +350,8 @@ const Register = () => {
             variant="secondary"
             className="w-full"
             onClick={handleGoogleRegister}
+            isLoading={isGoogleLoading}
+            disabled={isLoading}
             leftIcon={
               <svg className="w-4 h-4" viewBox="0 0 24 24">
                 <path

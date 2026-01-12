@@ -27,7 +27,7 @@ interface UseProgressReturn {
 }
 
 export const useProgress = (): UseProgressReturn => {
-  const { token, isAuthenticated } = useAuth();
+  const { getIdToken, isAuthenticated } = useAuth();
   const [progress, setProgress] = useState<KazanimProgress[]>([]);
   const [stats, setStats] = useState<ProgressStats | null>(null);
   const [recommendations, setRecommendations] = useState<PrerequisiteRecommendation[]>([]);
@@ -40,7 +40,14 @@ export const useProgress = (): UseProgressReturn => {
   const inProgressCount = progress.filter((p) => p.status === 'in_progress').length;
 
   const fetchProgress = useCallback(async () => {
-    if (!token || !isAuthenticated) {
+    if (!isAuthenticated) {
+      setProgress([]);
+      setIsLoading(false);
+      return;
+    }
+
+    const token = await getIdToken();
+    if (!token) {
       setProgress([]);
       setIsLoading(false);
       return;
@@ -66,10 +73,16 @@ export const useProgress = (): UseProgressReturn => {
       setError(err instanceof Error ? err.message : 'Progress yuklenemedi');
       setProgress([]);
     }
-  }, [token, isAuthenticated]);
+  }, [getIdToken, isAuthenticated]);
 
   const fetchStats = useCallback(async () => {
-    if (!token || !isAuthenticated) {
+    if (!isAuthenticated) {
+      setStats(null);
+      return;
+    }
+
+    const token = await getIdToken();
+    if (!token) {
       setStats(null);
       return;
     }
@@ -90,10 +103,16 @@ export const useProgress = (): UseProgressReturn => {
       console.error('Stats fetch error:', err);
       // Don't set error for stats - it's not critical
     }
-  }, [token, isAuthenticated]);
+  }, [getIdToken, isAuthenticated]);
 
   const fetchRecommendations = useCallback(async () => {
-    if (!token || !isAuthenticated) {
+    if (!isAuthenticated) {
+      setRecommendations([]);
+      return;
+    }
+
+    const token = await getIdToken();
+    if (!token) {
       setRecommendations([]);
       return;
     }
@@ -114,7 +133,7 @@ export const useProgress = (): UseProgressReturn => {
       console.error('Recommendations fetch error:', err);
       // Don't set error for recommendations - it's not critical
     }
-  }, [token, isAuthenticated]);
+  }, [getIdToken, isAuthenticated]);
 
   const refetch = useCallback(() => {
     setIsLoading(true);
@@ -125,12 +144,12 @@ export const useProgress = (): UseProgressReturn => {
 
   // Initial fetch
   useEffect(() => {
-    if (isAuthenticated && token) {
+    if (isAuthenticated) {
       refetch();
     } else {
       setIsLoading(false);
     }
-  }, [isAuthenticated, token]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     progress,

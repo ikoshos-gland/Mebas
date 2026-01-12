@@ -1,0 +1,143 @@
+{
+  "summary": "Mitoz bölünme evrelerini ve her evrede gerçekleşen olayları adım adım açıkladım.",
+  "solution_steps": [
+    {
+      "step_number": 1,
+      "description": "Mitoz bölünmenin evrelerini sıraladım.",
+      "result": "Profaz, metafaz, anafaz, telofaz."
+    },
+    {
+      "step_number": 2,
+      "description": "Her evrede gerçekleşen olayları açıkladım.",
+      "result": "Profaz: Kromozomlar yoğunlaşır, çekirdek zarı parçalanır. Metafaz: Kromozomlar hücrenin ekvatoral düzlemine dizilir. Anafaz: Kardeş kromatidler ayrılır ve hücrenin zıt kutuplarına çekilir. Telofaz: Çekirdek zarı yeniden oluşur, kromozomlar çözülür."
+    },
+    {
+      "step_number": 3,
+      "description": "Mitoz bölünmenin genel işlevini belirttim.",
+      "result": "Mitoz bölünme, hücrelerin büyümesi, yenilenmesi ve onarımı için gereklidir."
+    }
+  ],
+  "final_answer": "Mitoz bölünme evreleri sırasıyla profaz, metafaz, anafaz ve telofazdır. Her evrede sırasıyla kromozom yoğunlaşması, kromozomların dizilimi, kromatidlerin ayrılması ve çekirdek zarının yeniden oluşumu gerçekleşir.",
+  "matched_kazanimlar": [
+    {
+      "kazanim_code": "BİY.12.1.1.b",
+      "kazanim_description": "Öğrencilerin hücrenin hücre döngüsünde oluşumundan bölünmesine kadar geçirdiği süreçleri tanımlamaları beklenir.",
+      "match_score": 1.0,
+      "match_reason": "Bu kazanım mitoz bölünme evrelerini tanımlama ile eşleşiyor çünkü hücre döngüsü ve mitoz bölünme süreçleri soruda ele alınmıştır.",
+      "related_topics": [
+        "mitoz",
+        "hücre döngüsü"
+      ],
+      "bloom_level": "anlama",
+      "match_type": "primary"
+    },
+    {
+      "kazanim_code": "BİY.12.1.1.c",
+      "kazanim_description": "Canlılarda üremenin önemini sorgulayabilme.",
+      "match_score": 0.94,
+      "match_reason": "Bu kazanım mitoz bölünme ile eşleşiyor çünkü mitoz bölünme hücrelerin yenilenmesi ve büyümesi için önemlidir.",
+      "related_topics": [
+        "mitoz",
+        "hücre bölünmesi"
+      ],
+      "bloom_level": "anlama",
+      "match_type": "primary"
+    },
+    {
+      "kazanim_code": "BİY.12.1.1.d",
+      "kazanim_description": "Mitozun ve mayozun büyüme, gelişme, onarım, üreme açısından önemiyle ilgili çıkarım yapmaları beklenir.",
+      "match_score": 0.9,
+      "match_reason": "Bu kazanım mitoz bölünme evreleri ile eşleşiyor çünkü mitozun işlevleri soruda ele alınmıştır.",
+      "related_topics": [
+        "mitoz",
+        "hücre bölünmesi"
+      ],
+      "bloom_level": "değerlendirme",
+      "match_type": "primary"
+    },
+    {
+      "kazanim_code": "BİY.12.1.1.a",
+      "kazanim_description": "Kromozomların yapısı ve hücre bölünmesi sırasında kromozomların nasıl ayrıldıkları anlatılır.",
+      "match_score": 0.82,
+      "match_reason": "Bu kazanım mitoz bölünme evreleri ile eşleşiyor çünkü kromozomların ayrılması mitozun bir parçasıdır.",
+      "related_topics": [
+        "kromozomlar",
+        "mitoz"
+      ],
+      "bloom_level": "anlama",
+      "match_type": "primary"
+    },
+    {
+      "kazanim_code": "BİY.12.1.8.z",
+      "kazanim_description": "Eşeysiz ve eşeyli üreme ile ilgili bilimsel çıkarım yapabilme.",
+      "match_score": 0.75,
+      "match_reason": "Bu kazanım mitoz bölünme ile dolaylı olarak eşleşiyor çünkü mitoz eşeysiz üremenin bir mekanizmasıdır.",
+      "related_topics": [
+        "eşeysiz üreme",
+        "mitoz"
+      ],
+      "bloom_level": "değerlendirme",
+      "match_type": "alternative"
+    }
+  ],
+  "prerequisite_gaps": [],
+  "textbook_references": [],
+  "image_references": [],
+  "detected_topics": [
+    "mitoz",
+    "hücre bölünmesi",
+    "biyoloji"
+  ],
+  "difficulty_estimate": "orta",
+  "study_suggestions": [
+    "Mitoz bölünme evrelerini şematik olarak çalışın.",
+    "Her evrede gerçekleşen olayları görsellerle pekiştirin.",
+    "Hücre döngüsü ve mitozun işlevlerini karşılaştırın."
+  ],
+  "interdisciplinary_synthesis": {
+    "related_kazanimlar": [
+      "BİY.12.1.1.b",
+      "BİY.12.1.1.c",
+      "BİY.12.1.1.d",
+      "BİY.12.1.1.a",
+      "BİY.12.1.8.z"
+    ],
+    "relationship_type": "extension",
+    "synthesis_summary": "Mitoz bölünme evreleri hücre döngüsünün bir parçası olarak biyolojide önemli bir konudur. Bu kazanımlar hücre bölünmesi süreçlerini anlamak ve uygulamak için bir temel oluşturur.",
+    "key_concepts": [
+      "mitoz",
+      "hücre döngüsü",
+      "kromozomlar"
+    ],
+    "learning_path": [
+      {
+        "kazanim_code": "BİY.12.1.1.b",
+        "kazanim_title": "Hücre döngüsü süreçlerini tanımlama",
+        "order": 1,
+        "reason": "Hücre döngüsünün temel süreçlerini anlamak, mitoz bölünmeyi öğrenmek için gereklidir.",
+        "estimated_hours": 2.0
+      },
+      {
+        "kazanim_code": "BİY.12.1.1.a",
+        "kazanim_title": "Kromozomların yapısını ve ayrılmasını anlama",
+        "order": 2,
+        "reason": "Kromozomların mitozdaki davranışlarını anlamak, evreleri kavramak için önemlidir.",
+        "estimated_hours": 1.5
+      },
+      {
+        "kazanim_code": "BİY.12.1.1.c",
+        "kazanim_title": "Canlılarda üremenin önemini sorgulama",
+        "order": 3,
+        "reason": "Mitozun biyolojik işlevlerini anlamak için üreme süreçlerini öğrenmek gereklidir.",
+        "estimated_hours": 1.0
+      }
+    ],
+    "study_tips": [
+      "Mitoz evrelerini görsellerle çalışın.",
+      "Hücre döngüsü ve mitoz arasındaki ilişkiyi kavrayın.",
+      "Mitozun işlevlerini günlük hayattan örneklerle pekiştirin."
+    ],
+    "confidence": 0.95
+  },
+  "confidence": 0.95
+}

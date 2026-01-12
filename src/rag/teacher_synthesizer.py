@@ -18,6 +18,9 @@ class TeacherSynthesizer:
     SYSTEM_PROMPT = """Sen deneyimli bir MEB müfredat uzmanı ve özel ders hocasısın.
 Sana çözülmüş bir soru, RAG sisteminden gelen kazanımlar ve ders kitabı bölümleri veriliyor.
 
+Eğer "ONCEKI SOHBET" bölümü varsa, bu öğrenciyle önceki konuşmanı gösterir.
+Öğrencinin takip soruları sorması durumunda önceki bağlamı kullanarak tutarlı yanıt ver.
+
 ⚠️ KRİTİK KURAL - HALÜSİNASYON YASAK:
 - Kazanım kodlarını ve açıklamalarını SADECE sana verilen listeden kullan
 - ASLA kazanım kodu veya açıklaması UYDURMA
@@ -62,30 +65,33 @@ KURALLAR:
         matched_kazanimlar: List[Dict[str, Any]],
         textbook_chunks: List[Dict[str, Any]],
         question_analysis: Optional[Dict[str, Any]] = None,
-        summary: Optional[str] = None
+        summary: Optional[str] = None,
+        chat_history: Optional[List[Dict[str, str]]] = None
     ) -> str:
         """
         Generate a teacher-like explanation from RAG results.
-        
+
         Args:
             question_text: The student's original question
             matched_kazanimlar: Matched kazanımlar from RAG
             textbook_chunks: Related textbook content from RAG
             question_analysis: Pre-solved question analysis from QuestionAnalyzer
             summary: Optional existing summary to enhance
-            
+            chat_history: Previous conversation messages for context
+
         Returns:
             Pedagogical explanation as markdown string
         """
         import asyncio
-        
+
         # Build context from RAG results and question analysis
         context = self._build_context(
             question_text=question_text,
             kazanimlar=matched_kazanimlar,
             chunks=textbook_chunks,
             question_analysis=question_analysis,
-            summary=summary
+            summary=summary,
+            chat_history=chat_history
         )
         
         try:
@@ -112,11 +118,13 @@ KURALLAR:
         question_text: str,
         matched_kazanimlar: List[Dict[str, Any]],
         textbook_chunks: List[Dict[str, Any]],
-        summary: Optional[str] = None
+        question_analysis: Optional[Dict[str, Any]] = None,
+        summary: Optional[str] = None,
+        chat_history: Optional[List[Dict[str, str]]] = None
     ):
         """
         Stream the teacher explanation token by token.
-        
+
         Yields:
             str: Each token/chunk as it's generated
         """
@@ -124,7 +132,9 @@ KURALLAR:
             question_text=question_text,
             kazanimlar=matched_kazanimlar,
             chunks=textbook_chunks,
-            summary=summary
+            question_analysis=question_analysis,
+            summary=summary,
+            chat_history=chat_history
         )
         
         try:
@@ -182,16 +192,24 @@ KURALLAR:
         kazanimlar: List[Dict[str, Any]],
         chunks: List[Dict[str, Any]],
         question_analysis: Optional[Dict[str, Any]] = None,
-        summary: Optional[str] = None
+        summary: Optional[str] = None,
+        chat_history: Optional[List[Dict[str, str]]] = None
     ) -> str:
         """Build the context prompt from RAG results and question analysis"""
-        
+        from src.rag.chat_memory import format_chat_history_for_prompt
+
+        # Format chat history if provided
+        history_text = format_chat_history_for_prompt(chat_history) if chat_history else ""
+
         # Format kazanımlar - separate primary and related
         kazanim_text = ""
-        
-        if kazanimlar:
+
+        # Filter out None values from kazanimlar
+        valid_kazanimlar = [k for k in (kazanimlar or []) if k and isinstance(k, dict)]
+
+        if valid_kazanimlar:
             # First kazanım is the primary (highest confidence)
-            primary = kazanimlar[0]
+            primary = valid_kazanimlar[0]
             code = primary.get("kazanim_code") or primary.get("code", "")
             desc = primary.get("kazanim_description") or primary.get("description", "")
             grade = primary.get("grade", "")
@@ -206,15 +224,15 @@ KURALLAR:
 """
             
             # Rest are related kazanımlar
-            if len(kazanimlar) > 1:
+            if len(valid_kazanimlar) > 1:
                 kazanim_text += "\n**İLGİLİ KAZANIMLAR**\n"
-                for i, k in enumerate(kazanimlar[1:5], 1):
+                for i, k in enumerate(valid_kazanimlar[1:5], 1):
                     code = k.get("kazanim_code") or k.get("code", "")
                     desc = k.get("kazanim_description") or k.get("description", "")
                     grade = k.get("grade", "")
                     clean_desc = self._clean_kazanim_description(desc)
                     
-                    kazanim_text += f"- **{code}** ({grade}. Sınıf): {clean_desc[:150]}...\n"
+                    kazanim_text += f"- **{code}** ({grade}. Sınıf): {clean_desc}\n"
         
         if not kazanim_text:
             kazanim_text = "Eşleşen kazanım bulunamadı."
@@ -240,9 +258,9 @@ KURALLAR:
         
         # Format question analysis if provided (from QuestionAnalyzer)
         analysis_text = ""
-        if question_analysis:
+        if question_analysis and isinstance(question_analysis, dict):
             qa = question_analysis
-            solution_steps = qa.get("solution_steps", [])
+            solution_steps = qa.get("solution_steps") or []
             steps_text = "\n".join([f"  {i}. {step}" for i, step in enumerate(solution_steps, 1)]) if solution_steps else "Adımlar belirtilmedi"
             
             analysis_text = f"""
@@ -258,8 +276,8 @@ KURALLAR:
 **Açıklama:** {qa.get("explanation", "")}
 """
         
-        # Build full context with question analysis
-        return f"""## ÖĞRENCİNİN SORUSU
+        # Build full context with question analysis and chat history
+        return f"""{history_text}## ÖĞRENCİNİN SORUSU
 {question_text}
 {analysis_text}
 ## EŞLEŞEN KAZANIMLAR
@@ -269,7 +287,8 @@ KURALLAR:
 {chunks_text}
 
 ---
-Yukarıdaki bilgileri kullanarak 4 bölümlü yanıtını oluştur. SORU ANALİZİ bölümündeki çözümü temel al."""
+Yukarıdaki bilgileri kullanarak 4 bölümlü yanıtını oluştur. SORU ANALİZİ bölümündeki çözümü temel al.
+Eğer ONCEKI SOHBET bölümü varsa, öğrencinin takip sorusu olabilir - bağlamı dikkate al."""
 
     def _clean_kazanim_description(self, desc: str) -> str:
         """
@@ -299,10 +318,6 @@ Yukarıdaki bilgileri kullanarak 4 bölümlü yanıtını oluştur. SORU ANALİZ
         
         # Remove excessive whitespace
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-        
-        # Limit length
-        if len(cleaned) > 400:
-            cleaned = cleaned[:400] + "..."
         
         return cleaned
 

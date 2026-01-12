@@ -3,6 +3,10 @@
 .env.local
 .env.*.local
 
+# Firebase
+firebase-service-account.json
+*-firebase-adminsdk-*.json
+
 # Python
 __pycache__/
 *.py[cod]
@@ -46,8 +50,7 @@ htmlcov/
 .nox/
 
 # Data files - Don't commit large files!
-data/processed/
-data/pdfs/
+data/
 *.pdf
 *.db
 *.sqlite3

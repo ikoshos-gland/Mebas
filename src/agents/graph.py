@@ -16,6 +16,7 @@ from src.agents.nodes import (
     find_prerequisite_gaps,
     synthesize_interdisciplinary,
     generate_response,
+    handle_chat,
     handle_error
 )
 from src.agents.conditions import (
@@ -29,16 +30,18 @@ def create_meb_rag_graph(checkpointer=None) -> StateGraph:
     Create the MEB RAG question analysis graph.
 
     Graph Flow:
-    START → analyze_input → [success?]
-        → YES → retrieve_kazanimlar → [success?]
+    START → analyze_input → [message_type?]
+        → CHAT (greeting/general) → handle_chat → END
+        → ACADEMIC → retrieve_kazanimlar → [success?]
             → YES → retrieve_textbook → rerank_results → track_progress
                   → find_prerequisite_gaps → synthesize_interdisciplinary → generate_response → END
             → RETRY → retrieve_kazanimlar (with relaxed filters)
             → ERROR → handle_error → END
-        → NO → handle_error → END
+        → ERROR → handle_error → END
 
     track_progress node: Auto-tracks high-confidence kazanımlar (>=80%) to user's progress.
     find_prerequisite_gaps node: Identifies prerequisite knowledge gaps for matched kazanımlar.
+    handle_chat node: Handles greetings and general chat without RAG overhead.
 
     Args:
         checkpointer: Optional checkpointer for state persistence
@@ -59,6 +62,7 @@ def create_meb_rag_graph(checkpointer=None) -> StateGraph:
     workflow.add_node("find_prerequisite_gaps", find_prerequisite_gaps)
     workflow.add_node("synthesize_interdisciplinary", synthesize_interdisciplinary)
     workflow.add_node("generate_response", generate_response)
+    workflow.add_node("handle_chat", handle_chat)
     workflow.add_node("handle_error", handle_error)
 
     # ===== SET ENTRY POINT =====
@@ -66,12 +70,13 @@ def create_meb_rag_graph(checkpointer=None) -> StateGraph:
 
     # ===== ADD CONDITIONAL EDGES =====
 
-    # After analyze_input: check success
+    # After analyze_input: check message type and route accordingly
     workflow.add_conditional_edges(
         "analyze_input",
         check_analysis_success,
         {
-            "continue": "retrieve_kazanimlar",
+            "continue": "retrieve_kazanimlar",  # Academic question → RAG pipeline
+            "chat": "handle_chat",              # Greeting/chat → Simple response
             "error": "handle_error"
         }
     )
@@ -94,6 +99,7 @@ def create_meb_rag_graph(checkpointer=None) -> StateGraph:
     workflow.add_edge("find_prerequisite_gaps", "synthesize_interdisciplinary")
     workflow.add_edge("synthesize_interdisciplinary", "generate_response")
     workflow.add_edge("generate_response", END)
+    workflow.add_edge("handle_chat", END)  # Chat responses go directly to END
     workflow.add_edge("handle_error", END)
 
     # ===== COMPILE =====

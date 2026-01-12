@@ -1,6 +1,6 @@
-# Meba - AI-Powered Educational Platform
+# Yediiklim Okulları Kişiselleştirilmiş Yapay Zeka Asistanı
 
-Meba is an intelligent tutoring system aligned with the Turkish Ministry of National Education (MEB) curriculum. It uses Retrieval-Augmented Generation (RAG) with LangGraph state machines to provide pedagogically-correct, curriculum-grounded responses to student questions.
+Yediiklim Okulları Kişiselleştirilmiş Yapay Zeka Asistanı, MEB müfredatıyla uyumlu akıllı bir öğretim sistemidir. It uses Retrieval-Augmented Generation (RAG) with LangGraph state machines to provide pedagogically-correct, curriculum-grounded responses to student questions.
 
 ## Features
 

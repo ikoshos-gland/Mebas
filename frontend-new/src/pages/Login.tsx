@@ -1,23 +1,67 @@
 import { useState } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { Link, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { Mail, Lock, AlertCircle } from 'lucide-react';
+import { FirebaseError } from 'firebase/app';
 import { ParticleBackground } from '../components/background/ParticleBackground';
-import { Button, Input, Card } from '../components/common';
+import { Button, Input, Card, FullPageLoading } from '../components/common';
 import { useAuth } from '../context/AuthContext';
 
 const Login = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login } = useAuth();
+  const { login, loginWithGoogle, user, isAuthenticated, isLoading: isAuthLoading } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
   // Get redirect URL from state
   const from = (location.state as { from?: Location })?.from?.pathname || '/panel';
+
+  // Redirect if already authenticated
+  if (isAuthLoading) {
+    return <FullPageLoading text="Kontrol ediliyor..." />;
+  }
+
+  if (isAuthenticated && user?.profile_complete) {
+    return <Navigate to="/panel" replace />;
+  }
+
+  if (isAuthenticated && user && !user.profile_complete) {
+    return <Navigate to="/profil-tamamla" replace />;
+  }
+
+  // Redirect helper - check profile completion
+  const handleSuccessfulAuth = () => {
+    // If profile not complete, redirect to profile completion
+    // Otherwise redirect to intended destination
+    if (user && !user.profile_complete) {
+      navigate('/profil-tamamla', { replace: true });
+    } else {
+      navigate(from, { replace: true });
+    }
+  };
+
+  const getFirebaseErrorMessage = (error: FirebaseError): string => {
+    switch (error.code) {
+      case 'auth/user-not-found':
+      case 'auth/wrong-password':
+      case 'auth/invalid-credential':
+        return 'E-posta veya sifre hatali';
+      case 'auth/invalid-email':
+        return 'Gecersiz e-posta adresi';
+      case 'auth/user-disabled':
+        return 'Bu hesap devre disi birakilmis';
+      case 'auth/too-many-requests':
+        return 'Cok fazla basarisiz deneme. Lutfen daha sonra tekrar deneyin.';
+      case 'auth/network-request-failed':
+        return 'Baglanti hatasi. Internet baglantinizi kontrol edin.';
+      default:
+        return 'Giris basarisiz. Lutfen tekrar deneyin.';
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,18 +69,48 @@ const Login = () => {
     setIsLoading(true);
 
     try {
-      await login({ email, password, remember_me: rememberMe });
-      navigate(from, { replace: true });
+      await login(email, password);
+      handleSuccessfulAuth();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Giris basarisiz');
+      if (err instanceof FirebaseError) {
+        setError(getFirebaseErrorMessage(err));
+      } else if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError('Giris basarisiz');
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleGoogleLogin = async () => {
-    // TODO: Implement Google OAuth
-    setError('Google ile giris henuz hazir degil');
+    setError('');
+    setIsGoogleLoading(true);
+
+    try {
+      await loginWithGoogle();
+      handleSuccessfulAuth();
+    } catch (err) {
+      if (err instanceof FirebaseError) {
+        // User closed popup - not an error
+        if (err.code === 'auth/popup-closed-by-user') {
+          setIsGoogleLoading(false);
+          return;
+        }
+        if (err.code === 'auth/cancelled-popup-request') {
+          setIsGoogleLoading(false);
+          return;
+        }
+        setError(getFirebaseErrorMessage(err));
+      } else if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError('Google ile giris basarisiz');
+      }
+    } finally {
+      setIsGoogleLoading(false);
+    }
   };
 
   return (
@@ -51,7 +125,7 @@ const Login = () => {
               <div className="absolute w-full h-[0.5px] bg-ink rotate-45" />
               <div className="absolute w-full h-[0.5px] bg-ink -rotate-45" />
             </div>
-            <span className="font-serif-custom text-2xl text-ink">Meba</span>
+            <span className="font-serif-custom text-2xl text-ink">Yediiklim</span>
           </Link>
         </div>
 
@@ -77,6 +151,7 @@ const Login = () => {
               onChange={(e) => setEmail(e.target.value)}
               leftIcon={<Mail className="w-4 h-4" />}
               required
+              disabled={isLoading || isGoogleLoading}
             />
 
             <Input
@@ -87,19 +162,10 @@ const Login = () => {
               onChange={(e) => setPassword(e.target.value)}
               leftIcon={<Lock className="w-4 h-4" />}
               required
+              disabled={isLoading || isGoogleLoading}
             />
 
-            <div className="flex items-center justify-between">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                  className="w-4 h-4 rounded border-stone-300 text-sepia focus:ring-sepia"
-                />
-                <span className="text-sm text-neutral-600">Beni hatirla</span>
-              </label>
-
+            <div className="flex items-center justify-end">
               <Link
                 to="/sifremi-unuttum"
                 className="text-sm text-sepia hover:underline"
@@ -108,7 +174,12 @@ const Login = () => {
               </Link>
             </div>
 
-            <Button type="submit" className="w-full" isLoading={isLoading}>
+            <Button
+              type="submit"
+              className="w-full"
+              isLoading={isLoading}
+              disabled={isGoogleLoading}
+            >
               Giris Yap
             </Button>
           </form>
@@ -128,6 +199,8 @@ const Login = () => {
             variant="secondary"
             className="w-full"
             onClick={handleGoogleLogin}
+            isLoading={isGoogleLoading}
+            disabled={isLoading}
             leftIcon={
               <svg className="w-4 h-4" viewBox="0 0 24 24">
                 <path

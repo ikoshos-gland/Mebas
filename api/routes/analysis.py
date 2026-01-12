@@ -65,9 +65,9 @@ async def analyze_image(
         
         processing_time = int((time.time() - start_time) * 1000)
         
-        # Extract response data
-        response_data = result.get("response", {})
-        related_chunks = result.get("related_chunks", [])
+        # Extract response data (handle None explicitly)
+        response_data = result.get("response") or {}
+        related_chunks = result.get("related_chunks") or []
         question_text = result.get("question_text", "")
         
         # Step 1: Analyze question with dedicated QuestionAnalyzer (separate from RAG)
@@ -162,11 +162,12 @@ async def analyze_text(
         )
         
         processing_time = int((time.time() - start_time) * 1000)
-        
-        response_data = result.get("response", {})
-        
+
+        # Handle None explicitly
+        response_data = result.get("response") or {}
+
         # Extract textbook references from related_chunks
-        related_chunks = result.get("related_chunks", [])
+        related_chunks = result.get("related_chunks") or []
         textbook_refs = []
         for chunk in related_chunks:
             textbook_refs.append({
@@ -233,23 +234,158 @@ async def analyze_text(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/image-stream")
+async def analyze_image_stream(request: AnalyzeImageRequest):
+    """
+    Stream image analysis with GPT-5.2 teacher explanation.
+
+    First does RAG retrieval on image, then streams the teacher explanation token by token.
+    Includes chat history for follow-up questions if conversation_id is provided.
+    """
+    async def event_generator() -> AsyncGenerator[str, None]:
+        try:
+            # Load chat history if conversation_id provided
+            chat_history = []
+            if request.conversation_id:
+                try:
+                    from src.database.db import get_session
+                    from src.rag.chat_memory import load_chat_history
+                    db = get_session()
+                    chat_history = load_chat_history(db, request.conversation_id, max_messages=6)
+                    db.close()
+                except Exception as e:
+                    print(f"Failed to load chat history: {e}")
+
+            # Step 1: Do RAG retrieval (non-streaming)
+            graph = get_graph()
+            result = await graph.analyze(
+                question_image_base64=request.image_base64,
+                user_grade=request.grade,
+                user_subject=request.subject,
+                is_exam_mode=request.is_exam_mode,
+                conversation_id=request.conversation_id
+            )
+
+            question_text = result.get("question_text", "")
+
+            # Send RAG results first
+            response_data = result.get("response", {}) or {}
+            matched_kazanimlar = result.get("matched_kazanimlar", [])
+            related_chunks = result.get("related_chunks", [])
+
+            # Run QuestionAnalyzer for pre-solved question
+            question_analysis = None
+            try:
+                from src.rag.question_analyzer import QuestionAnalyzer
+                analyzer = QuestionAnalyzer()
+                question_analysis = await analyzer.analyze(question_text)
+            except Exception:
+                pass
+
+            # Format textbook refs
+            textbook_refs = []
+            for chunk in related_chunks:
+                textbook_refs.append({
+                    "chapter": chunk.get("hierarchy_path", ""),
+                    "pages": chunk.get("page_range", ""),
+                    "content": chunk.get("content", "")[:500] if chunk.get("content") else ""
+                })
+
+            # Send initial data
+            rag_data = {
+                "event": "rag_complete",
+                "data": {
+                    "analysis_id": result.get("analysis_id", ""),
+                    "status": result.get("status", "unknown"),
+                    "question_text": question_text,
+                    "summary": response_data.get("summary") if isinstance(response_data, dict) else None,
+                    "matched_kazanimlar": [
+                        {
+                            "code": k.get("kazanim_code", ""),
+                            "description": k.get("kazanim_description", ""),
+                            "score": k.get("score", 0),
+                            "grade": k.get("grade")
+                        }
+                        for k in matched_kazanimlar
+                    ],
+                    "textbook_references": textbook_refs,
+                    "confidence": response_data.get("confidence", 0) if isinstance(response_data, dict) else 0
+                }
+            }
+            yield f"data: {json.dumps(rag_data, ensure_ascii=False)}\n\n"
+
+            # Step 2: Stream teacher explanation
+            yield f"data: {json.dumps({'event': 'teacher_start'})}\n\n"
+
+            from src.rag.teacher_synthesizer import TeacherSynthesizer
+            synthesizer = TeacherSynthesizer()
+
+            async for token in synthesizer.synthesize_stream(
+                question_text=question_text,
+                matched_kazanimlar=matched_kazanimlar,
+                textbook_chunks=related_chunks,
+                question_analysis=question_analysis,
+                summary=response_data.get("summary") if isinstance(response_data, dict) else None,
+                chat_history=chat_history
+            ):
+                yield f"data: {json.dumps({'event': 'teacher_token', 'token': token}, ensure_ascii=False)}\n\n"
+
+            yield f"data: {json.dumps({'event': 'done'})}\n\n"
+
+        except Exception as e:
+            yield f"data: {json.dumps({'event': 'error', 'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
 @router.post("/text-stream")
 async def analyze_text_stream(request: AnalyzeTextRequest):
     """
     Stream analysis with GPT-5.2 teacher explanation.
-    
+
     First does RAG retrieval, then streams the teacher explanation token by token.
+    Includes chat history for follow-up questions if conversation_id is provided.
     """
     async def event_generator() -> AsyncGenerator[str, None]:
         try:
+            # Load chat history if conversation_id provided
+            chat_history = []
+            if request.conversation_id:
+                try:
+                    from src.database.db import get_session
+                    from src.rag.chat_memory import load_chat_history
+                    db = get_session()
+                    chat_history = load_chat_history(db, request.conversation_id, max_messages=6)
+                    db.close()
+                except Exception as e:
+                    print(f"Failed to load chat history: {e}")
+
             # Step 1: Do RAG retrieval (non-streaming)
             graph = get_graph()
             result = await graph.analyze(
                 question_text=request.question_text,
                 user_grade=request.grade,
                 user_subject=request.subject,
-                is_exam_mode=request.is_exam_mode
+                is_exam_mode=request.is_exam_mode,
+                conversation_id=request.conversation_id
             )
+
+            # Run QuestionAnalyzer for pre-solved question
+            question_analysis = None
+            try:
+                from src.rag.question_analyzer import QuestionAnalyzer
+                analyzer = QuestionAnalyzer()
+                question_analysis = await analyzer.analyze(request.question_text)
+            except Exception:
+                pass
             
             # Send RAG results first
             response_data = result.get("response", {})
@@ -289,15 +425,17 @@ async def analyze_text_stream(request: AnalyzeTextRequest):
             
             # Step 2: Stream teacher explanation
             yield f"data: {json.dumps({'event': 'teacher_start'})}\n\n"
-            
+
             from src.rag.teacher_synthesizer import TeacherSynthesizer
             synthesizer = TeacherSynthesizer()
-            
+
             async for token in synthesizer.synthesize_stream(
                 question_text=request.question_text,
                 matched_kazanimlar=matched_kazanimlar,
                 textbook_chunks=related_chunks,
-                summary=response_data.get("summary")
+                question_analysis=question_analysis,
+                summary=response_data.get("summary"),
+                chat_history=chat_history
             ):
                 yield f"data: {json.dumps({'event': 'teacher_token', 'token': token}, ensure_ascii=False)}\n\n"
             

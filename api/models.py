@@ -15,17 +15,22 @@ class AnalyzeImageRequest(BaseModel):
     grade: Optional[int] = Field(None, ge=1, le=12, description="Student grade level")
     subject: Optional[str] = Field(None, description="Subject code (M, F, T...)")
     is_exam_mode: bool = Field(
-        False, 
+        False,
         description="YKS/sınav modu: True=tüm sınıflar (9-12), False=sadece belirtilen sınıf"
     )
-    
+    conversation_id: Optional[str] = Field(
+        None,
+        description="Conversation ID for chat history context"
+    )
+
     model_config = {
         "json_schema_extra": {
             "example": {
                 "image_base64": "iVBORw0KGgoAAAANSUhEUgAA...",
                 "grade": 12,
                 "subject": "M",
-                "is_exam_mode": True
+                "is_exam_mode": True,
+                "conversation_id": "abc123-def456"
             }
         }
     }
@@ -37,17 +42,22 @@ class AnalyzeTextRequest(BaseModel):
     grade: Optional[int] = Field(None, ge=1, le=12, description="Student grade level")
     subject: Optional[str] = Field(None, description="Subject code (M, F, T...)")
     is_exam_mode: bool = Field(
-        False, 
+        False,
         description="YKS/sınav modu: True=tüm sınıflar (9-12), False=sadece belirtilen sınıf"
     )
-    
+    conversation_id: Optional[str] = Field(
+        None,
+        description="Conversation ID for chat history context"
+    )
+
     model_config = {
         "json_schema_extra": {
             "example": {
                 "question_text": "Üçgenlerde benzerlik koşullarını açıklayın.",
                 "grade": 12,
                 "subject": "M",
-                "is_exam_mode": True
+                "is_exam_mode": True,
+                "conversation_id": "abc123-def456"
             }
         }
     }

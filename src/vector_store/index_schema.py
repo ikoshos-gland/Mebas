@@ -185,16 +185,19 @@ def create_image_index_schema(index_name: str = "meb-images-index") -> SearchInd
                 type=SearchFieldDataType.String,
                 filterable=True
             ),
-            # Related content
+            # Related content - links image to surrounding text context
             SearchField(
                 name="related_text",
                 type=SearchFieldDataType.String,
-                searchable=True
+                searchable=True,
+                analyzer_name="tr.microsoft"  # Turkish analyzer for better search
             ),
+            # Document hierarchy for navigation (e.g., "Ünite 1/Konu 2/Alt Başlık")
             SearchField(
                 name="hierarchy_path",
                 type=SearchFieldDataType.String,
-                searchable=True
+                searchable=True,
+                filterable=True  # Allow filtering by hierarchy prefix
             ),
             # File path for retrieval
             SearchField(

@@ -16,22 +16,29 @@ MAX_RETRIEVAL_RETRIES = settings.retrieval_max_retries
 
 def check_analysis_success(
     state: QuestionAnalysisState
-) -> Literal["continue", "error"]:
+) -> Literal["continue", "chat", "error"]:
     """
-    Check if input analysis was successful.
-    
+    Check if input analysis was successful and route accordingly.
+
     Returns:
-        "continue" → proceed to retrieval
+        "continue" → proceed to RAG retrieval (academic question)
+        "chat" → go to simple chat handler (greeting/general chat)
         "error" → go to error handler
     """
     # Check for explicit error
     if state.get("error"):
         return "error"
-    
+
+    # Check message type - route non-academic messages to chat handler
+    message_type = state.get("message_type", "")
+    if message_type in ("greeting", "general_chat"):
+        return "chat"
+
     # Check if we have question text
     if not state.get("question_text"):
         return "error"
-    
+
+    # For academic questions or unclear messages, proceed with RAG
     return "continue"
 
 

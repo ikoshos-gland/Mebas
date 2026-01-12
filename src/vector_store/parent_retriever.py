@@ -230,7 +230,17 @@ class ParentDocumentRetriever:
             reverse=True
         )
 
-        return sorted_results[:top_k]
+        # 4. Assign match_type based on score threshold
+        # Primary: High relevance (direct match)
+        # Alternative: Lower relevance (contextual/related)
+        PRIMARY_THRESHOLD = 0.7
+        final_results = []
+        for result in sorted_results[:top_k]:
+            score = result.get("score", result.get("merged_score", 0))
+            result["match_type"] = "primary" if score >= PRIMARY_THRESHOLD else "alternative"
+            final_results.append(result)
+
+        return final_results
 
     def _merge_hybrid_results(
         self,

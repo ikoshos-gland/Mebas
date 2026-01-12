@@ -1,5 +1,5 @@
 /**
- * Meba Design System - Theme Constants
+ * Yediiklim AI Design System - Theme Constants
  *
  * Port of the original website.html design language:
  * - Warm stone color palette
@@ -66,9 +66,9 @@ export const animations = {
 } as const;
 
 // API Configuration
-// In Docker: uses /api proxy (VITE_API_URL not set or empty)
+// In Docker: uses /api proxy (VITE_API_BASE_URL not set or empty)
 // In development: uses http://localhost:8001 directly
-export const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
 // Application Routes
 export const routes = {

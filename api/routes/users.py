@@ -4,11 +4,10 @@ User routes - Profile and preferences management
 from datetime import datetime
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from api.auth.deps import get_current_active_user
-from api.auth.utils import get_password_hash, verify_password
 from src.database.db import get_db
 from src.database.models import User, Subscription
 import logging
@@ -23,12 +22,14 @@ router = APIRouter(prefix="/users", tags=["Users"])
 class UserResponse(BaseModel):
     """User response schema"""
     id: int
+    firebase_uid: str
     email: str
     full_name: str
     role: str
     grade: Optional[int] = None
     avatar_url: Optional[str] = None
     is_verified: bool
+    profile_complete: bool
     preferences: Dict[str, Any] = {}
     created_at: datetime
 
@@ -70,12 +71,6 @@ class UpdatePreferencesRequest(BaseModel):
     theme: Optional[str] = Field(None, pattern="^(light|dark|system)$")
 
 
-class ChangePasswordRequest(BaseModel):
-    """Change password request schema"""
-    current_password: str
-    new_password: str = Field(..., min_length=6)
-
-
 # ================== ROUTES ==================
 
 @router.get("/me", response_model=UserWithSubscription)
@@ -112,7 +107,7 @@ async def update_profile(
     if not update_data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Güncellenecek alan belirtilmedi"
+            detail="Guncellenecek alan belirtilmedi"
         )
 
     for field, value in update_data.items():
@@ -151,7 +146,7 @@ async def update_preferences(
     if not update_data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Güncellenecek tercih belirtilmedi"
+            detail="Guncellenecek tercih belirtilmedi"
         )
 
     # Merge with existing preferences
@@ -166,39 +161,6 @@ async def update_preferences(
     logger.info(f"User preferences updated: {current_user.email}")
 
     return current_user.preferences
-
-
-@router.post("/me/change-password")
-async def change_password(
-    request: ChangePasswordRequest,
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
-):
-    """
-    Change current user's password.
-    """
-    # Check if user has a password (not OAuth-only)
-    if not current_user.hashed_password:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Bu hesap Google ile oluşturulmuş. Şifre değiştirilemez."
-        )
-
-    # Verify current password
-    if not verify_password(request.current_password, current_user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Mevcut şifre hatalı"
-        )
-
-    # Update password
-    current_user.hashed_password = get_password_hash(request.new_password)
-    current_user.updated_at = datetime.utcnow()
-    db.commit()
-
-    logger.info(f"User password changed: {current_user.email}")
-
-    return {"message": "Şifre başarıyla değiştirildi"}
 
 
 @router.get("/me/subscription", response_model=SubscriptionResponse)
@@ -216,7 +178,7 @@ async def get_subscription(
     if not subscription:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Abonelik bulunamadı"
+            detail="Abonelik bulunamadi"
         )
 
     return SubscriptionResponse.model_validate(subscription)

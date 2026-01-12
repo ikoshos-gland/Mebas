@@ -449,11 +449,20 @@ class IndexingPipeline:
             hierarchy = c.get("hierarchy_path", "")
             content = c.get("content", "")
             # Combine hierarchy (context) with content for better embeddings
-            # If content is very long, prioritize beginning (usually definitions/concepts)
-            # and end (usually conclusions/summaries)
+            # If content is very long, sample from beginning, middle, and end
+            # to preserve semantic meaning from all parts
             if len(content) > 5500:
-                # Smart truncation: first 4000 chars + last 1500 chars
-                content = content[:4000] + "\n...\n" + content[-1500:]
+                # Improved truncation: beginning (definitions) + middle (core content) + end (conclusions)
+                # 3000 from start + 1000 from middle + 1500 from end = 5500 chars
+                mid_start = len(content) // 2 - 500
+                content = (
+                    content[:3000] +
+                    "\n[...]\n" +
+                    content[mid_start:mid_start + 1000] +
+                    "\n[...]\n" +
+                    content[-1500:]
+                )
+                print(f"   ⚠️ Truncated long chunk ({len(c.get('content', ''))} chars): {c.get('id', '')[:8]}...")
             embed_text = f"{hierarchy}\n\n{content}" if hierarchy else content
             contents.append(embed_text[:6000])  # Hard limit for safety
 

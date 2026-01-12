@@ -38,19 +38,23 @@ class LLMReranker:
     to the student's question, then reorders by combined score.
     """
     
-    SYSTEM_PROMPT = """Sen bir MEB müfredat uzmanısın. Öğrenci sorusuna göre kazanımların alakalılığını değerlendir.
+    SYSTEM_PROMPT = """Sen bir MEB müfredat uzmanısın. Öğrenci sorusuna göre kazanımların GERÇEK alakalılığını değerlendir.
 
-SKORLAMA KRİTERLERİ:
-- 0.9-1.0: Kazanım soruyu doğrudan kapsar, tam eşleşme
-- 0.7-0.8: Güçlü ilişki, kazanım soruyla yakından alakalı
-- 0.5-0.6: Orta düzey ilişki, kısmen alakalı
-- 0.3-0.4: Zayıf ilişki, dolaylı bağlantı
-- 0.0-0.2: Alakasız veya çok uzak bağlantı
+KRİTİK: Vektör arama bazen yanlış sonuçlar döndürür. SENİN GÖREVİN bunları tespit edip düşük skor vermek!
+
+SKORLAMA KRİTERLERİ (SIKI UYGULA):
+- 0.9-1.0: Kazanım soruyu doğrudan kapsar, AYNI KONU (örn: soru mitoz ise kazanım da mitoz hakkında)
+- 0.7-0.8: Aynı alan içinde güçlü ilişki (örn: soru hücre bölünmesi, kazanım DNA replikasyonu)
+- 0.5-0.6: İlgili ama farklı alt konu (örn: soru genetik, kazanım evrim)
+- 0.3-0.4: Zayıf/dolaylı bağlantı (örn: soru biyoloji ama farklı ünite)
+- 0.0-0.2: ALAKASIZ - Farklı konu! (örn: soru mitoz ama kazanım sindirim sistemi)
+
+⚠️ DİKKAT: Eğer soru "mitoz/hücre bölünmesi" hakkındaysa ve kazanım "sindirim/solunum/dolaşım" gibi FARKLI bir sistemle ilgiliyse → 0.0-0.1 ver!
 
 HER KAZANIM İÇİN:
-1. Soruyla semantik benzerliği değerlendir
-2. Konusal örtüşmeyi kontrol et
-3. Sınıf seviyesi uyumluluğunu göz önünde bulundur
+1. Sorunun ASIL KONUSUNU belirle (mitoz, sindirim, genetik, vb.)
+2. Kazanımın ASIL KONUSUNU belirle
+3. Konular AYNI MI? Değilse düşük skor ver
 4. 0-1 arası skor ve kısa gerekçe ver"""
 
     USER_PROMPT_TEMPLATE = """## Öğrenci Sorusu
@@ -139,13 +143,24 @@ Her kazanımı soruyla alakalılığına göre skorla (0.0-1.0)."""
                 for item in result.ranked_items
             }
             
+            # Get hard cutoff from settings
+            hard_cutoff = self.settings.reranker_hard_cutoff
+
             # Blend scores and add reranking info
+            filtered_results = []
             for k in kazanimlar_to_rank:
                 code = k.get("kazanim_code", "")
                 original_score = k.get("score", 0)
-                
+
                 if code in score_map:
                     llm_score = score_map[code]["score"]
+
+                    # HARD CUTOFF: Filter out if LLM score is too low
+                    # This catches semantically irrelevant results that vector search missed
+                    if llm_score < hard_cutoff:
+                        print(f"[LLMReranker] Filtered out {code} - LLM score {llm_score:.2f} < cutoff {hard_cutoff}")
+                        continue
+
                     # Normalize original score to 0-1 range
                     # If already <= 1.0, it's pre-normalized (from hybrid search)
                     # Otherwise, assume max ~10 from Azure Search
@@ -161,20 +176,22 @@ Her kazanımı soruyla alakalılığına göre skorla (0.0-1.0)."""
                     k["rerank_score"] = llm_score
                     k["rerank_reasoning"] = score_map[code]["reasoning"]
                     k["blended_score"] = blended
+                    filtered_results.append(k)
                 else:
-                    # Not scored by LLM, keep original normalized
+                    # Not scored by LLM - keep but with lower confidence
                     if original_score <= 1.0:
-                        k["blended_score"] = original_score
+                        k["blended_score"] = original_score * 0.5  # Penalize unscored
                     else:
-                        k["blended_score"] = min(1.0, original_score / 10.0)
-            
+                        k["blended_score"] = min(1.0, original_score / 10.0) * 0.5
+                    filtered_results.append(k)
+
             # Sort by blended score
             reranked = sorted(
-                kazanimlar_to_rank, 
-                key=lambda x: x.get("blended_score", 0), 
+                filtered_results,
+                key=lambda x: x.get("blended_score", 0),
                 reverse=True
             )
-            
+
             return reranked[:top_k]
             
         except Exception as e:

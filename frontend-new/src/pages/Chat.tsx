@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import {
   Send,
   Paperclip,
@@ -15,12 +15,15 @@ import {
   Brain,
   Settings,
   Info,
+  Menu,
 } from 'lucide-react';
 import { ParticleBackground } from '../components/background/ParticleBackground';
 import { Header } from '../components/layout/Header';
 import { Card } from '../components/common';
+import { ChatSidebar } from '../components/chat';
 import { useAuth } from '../context/AuthContext';
 import { grades, subjects, examModes, API_BASE_URL } from '../utils/theme';
+import { useConversations } from '../hooks/useConversations';
 
 // Mock message type
 interface Message {
@@ -37,8 +40,10 @@ interface Message {
 }
 
 const Chat = () => {
-  const { id: _conversationId } = useParams(); // Will be used for loading conversations
-  const { user } = useAuth();
+  const { id: conversationId } = useParams();
+  const navigate = useNavigate();
+  const { user, getIdToken, isAuthenticated } = useAuth();
+  const { createConversation, getConversation } = useConversations();
 
   // State
   const [messages, setMessages] = useState<Message[]>([]);
@@ -46,6 +51,8 @@ const Chat = () => {
   const [currentImage, setCurrentImage] = useState<string | null>(null);
   const [currentImageName, setCurrentImageName] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingConversation, setIsLoadingConversation] = useState(false);
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [showSettings] = useState(true); // Will add toggle later
 
   // Settings - stored in localStorage for persistence
@@ -61,6 +68,7 @@ const Chat = () => {
   });
   const [showMobileSettings, setShowMobileSettings] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // Persist settings to localStorage
   useEffect(() => {
@@ -86,6 +94,102 @@ const Chat = () => {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
   }, [messages]);
+
+  // Load existing conversation if conversationId is provided
+  useEffect(() => {
+    const loadConversation = async () => {
+      if (!conversationId || !isAuthenticated) return;
+
+      setIsLoadingConversation(true);
+      try {
+        const conversation = await getConversation(conversationId);
+        if (conversation) {
+          setCurrentConversationId(conversationId);
+          // Convert conversation messages to local Message format
+          const loadedMessages: Message[] = conversation.messages.map((msg) => ({
+            id: String(msg.id),
+            role: msg.role,
+            content: msg.content,
+            image: msg.image_url || undefined,
+            analysis: msg.extra_data?.analysis as Message['analysis'],
+          }));
+          setMessages(loadedMessages);
+
+          // Update settings from conversation if available
+          if (conversation.subject) {
+            setSubject(conversation.subject);
+          }
+          if (conversation.grade) {
+            setGrade(conversation.grade);
+          }
+        } else {
+          // Conversation not found, redirect to new chat
+          navigate('/sohbet', { replace: true });
+        }
+      } catch (error) {
+        console.error('Failed to load conversation:', error);
+        navigate('/sohbet', { replace: true });
+      } finally {
+        setIsLoadingConversation(false);
+      }
+    };
+
+    loadConversation();
+  }, [conversationId, isAuthenticated, getConversation, navigate]);
+
+  // Track kazanimlar to progress API
+  const trackKazanimlar = useCallback(async (kazanimlar: Array<{ code: string; score: number }>, convId?: string) => {
+    if (!isAuthenticated || kazanimlar.length === 0) return;
+
+    const token = await getIdToken();
+    if (!token) return;
+
+    // Track each kazanim with high confidence score (>= 0.7)
+    for (const k of kazanimlar.filter((k) => k.score >= 0.7)) {
+      try {
+        await fetch(`${API_BASE_URL}/users/me/progress/track`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            kazanim_code: k.code,
+            confidence_score: k.score,
+            conversation_id: convId,
+          }),
+        });
+      } catch (error) {
+        console.error('Failed to track kazanim:', error);
+      }
+    }
+  }, [isAuthenticated, getIdToken]);
+
+  // Save message to conversation
+  const saveMessage = useCallback(async (convId: string, role: 'user' | 'assistant', content: string, imageUrl?: string, analysis?: Message['analysis']) => {
+    if (!isAuthenticated) return;
+
+    const token = await getIdToken();
+    if (!token) return;
+
+    try {
+      await fetch(`${API_BASE_URL}/conversations/${convId}/messages`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          role,
+          content,
+          image_url: imageUrl,
+          extra_data: analysis ? { analysis } : {},
+        }),
+      });
+    } catch (error) {
+      console.error('Failed to save message:', error);
+    }
+  }, [isAuthenticated, getIdToken]);
 
   // Auto-resize textarea
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -169,7 +273,7 @@ const Chat = () => {
     reader.readAsDataURL(file);
   };
 
-  // Handle send message - calls real API with settings
+  // Handle send message with streaming - calls real API with SSE
   const handleSend = async () => {
     if (isLoading || (!inputText.trim() && !currentImage)) return;
 
@@ -187,29 +291,61 @@ const Chat = () => {
     clearImage();
     setIsLoading(true);
 
-    try {
-      // Determine which endpoint to use based on whether there's an image
-      const endpoint = questionImage
-        ? `${API_BASE_URL}/analyze/image`
-        : `${API_BASE_URL}/analyze/text`;
+    // Create or use existing conversation
+    let convId = currentConversationId;
+    if (!convId && isAuthenticated) {
+      const newConversation = await createConversation(
+        questionText.slice(0, 50) + (questionText.length > 50 ? '...' : ''),
+        subject,
+        grade
+      );
+      if (newConversation) {
+        convId = newConversation.id;
+        setCurrentConversationId(convId);
+        // Update URL without reloading
+        navigate(`/sohbet/${convId}`, { replace: true });
+      }
+    }
 
-      // Build request body with settings
+    // Save user message to conversation (await to ensure it's saved)
+    if (convId) {
+      await saveMessage(convId, 'user', questionText, questionImage || undefined);
+    }
+
+    // Create placeholder for streaming message
+    const assistantMessageId = (Date.now() + 1).toString();
+    const initialAssistantMessage: Message = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      analysis: undefined,
+    };
+    setMessages((prev) => [...prev, initialAssistantMessage]);
+
+    try {
+      // Use streaming endpoints
+      const endpoint = questionImage
+        ? `${API_BASE_URL}/analyze/image-stream`
+        : `${API_BASE_URL}/analyze/text-stream`;
+
+      // Build request body with settings and conversation context
       const requestBody = questionImage
         ? {
             image_base64: questionImage,
-            question_text: questionText || undefined,
             grade,
             subject,
             is_exam_mode: isExamMode,
+            conversation_id: convId || undefined,
           }
         : {
             question_text: questionText,
             grade,
             subject,
             is_exam_mode: isExamMode,
+            conversation_id: convId || undefined,
           };
 
-      console.log('Sending request to:', endpoint, { grade, subject, isExamMode });
+      console.log('Sending streaming request to:', endpoint, { grade, subject, isExamMode });
 
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -223,41 +359,109 @@ const Chat = () => {
         throw new Error(`API error: ${response.status}`);
       }
 
-      const data = await response.json();
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('No reader available');
 
-      // Transform API response to message format
-      // API returns: teacher_explanation, summary, matched_kazanimlar (with code, description, score)
-      // and textbook_references (with chapter, pages)
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: data.teacher_explanation || data.summary || 'Yanıt alınamadı.',
-        analysis: {
-          kazanimlar: (data.matched_kazanimlar || []).map((k: { code: string; description: string; score: number }) => ({
-            code: k.code,
-            description: k.description,
-            score: k.score,
-          })),
-          textbookRefs: (data.textbook_references || []).map((c: { chapter: string; pages: string }) => ({
-            chapter: c.chapter || '',
-            pages: c.pages || '',
-          })),
-          confidence: data.confidence || 0.85,
-          processingTime: data.processing_time_ms ? data.processing_time_ms / 1000 : 0,
-        },
-      };
+      const decoder = new TextDecoder();
+      let streamedContent = '';
+      let analysisData: Message['analysis'] = undefined;
 
-      setMessages((prev) => [...prev, assistantMessage]);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+
+          try {
+            const jsonStr = line.slice(6); // Remove 'data: ' prefix
+            if (!jsonStr.trim()) continue;
+
+            const event = JSON.parse(jsonStr);
+
+            if (event.event === 'rag_complete') {
+              // RAG results received - update analysis data
+              const data = event.data;
+              analysisData = {
+                kazanimlar: (data.matched_kazanimlar || []).map((k: { code: string; description: string; score: number }) => ({
+                  code: k.code,
+                  description: k.description,
+                  score: k.score,
+                })),
+                textbookRefs: (data.textbook_references || []).map((c: { chapter: string; pages: string }) => ({
+                  chapter: c.chapter || '',
+                  pages: c.pages || '',
+                })),
+                confidence: data.confidence || 0.85,
+                processingTime: 0,
+              };
+
+              // Update message with analysis data
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === assistantMessageId
+                    ? { ...msg, analysis: analysisData }
+                    : msg
+                )
+              );
+            } else if (event.event === 'teacher_token') {
+              // Stream token received - append to content
+              streamedContent += event.token;
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === assistantMessageId
+                    ? { ...msg, content: streamedContent }
+                    : msg
+                )
+              );
+            } else if (event.event === 'error') {
+              throw new Error(event.error);
+            }
+          } catch (parseError) {
+            // Skip invalid JSON lines
+            console.debug('Parse error:', parseError);
+          }
+        }
+      }
+
+      // Final update with complete content
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === assistantMessageId
+            ? {
+                ...msg,
+                content: streamedContent || 'Yanıt alınamadı.',
+                analysis: analysisData,
+              }
+            : msg
+        )
+      );
+
+      // Save assistant message to conversation (await to ensure it's saved)
+      if (convId) {
+        await saveMessage(convId, 'assistant', streamedContent || 'Yanıt alınamadı.', undefined, analysisData);
+      }
+
+      // Track kazanimlar to progress API
+      if (analysisData?.kazanimlar) {
+        trackKazanimlar(analysisData.kazanimlar, convId || undefined);
+      }
     } catch (error) {
       console.error('API Error:', error);
-      // Fallback to mock response on error
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: `Üzgünüm, bir hata oluştu. Lütfen tekrar deneyin.\n\n*Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}*`,
-        analysis: undefined,
-      };
-      setMessages((prev) => [...prev, errorMessage]);
+      // Update the placeholder message with error
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === assistantMessageId
+            ? {
+                ...msg,
+                content: `Üzgünüm, bir hata oluştu. Lütfen tekrar deneyin.\n\n*Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}*`,
+              }
+            : msg
+        )
+      );
     } finally {
       setIsLoading(false);
     }
@@ -272,20 +476,38 @@ const Chat = () => {
   };
 
   return (
-    <div className="h-screen w-screen overflow-hidden relative bg-canvas">
-      <ParticleBackground />
+    <div className="h-screen w-screen overflow-hidden relative bg-canvas flex">
+      {/* Chat Sidebar */}
+      <ChatSidebar
+        currentConversationId={conversationId}
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+      />
 
-      {/* Header */}
-      <Header transparent />
+      {/* Main Area */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden relative">
+        <ParticleBackground />
 
-      {/* Main Content */}
-      <main
-        className="relative z-20 h-full w-full flex flex-col pt-24"
-        onDragOver={handleDragOver}
-        onDragEnter={handleDragEnter}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-      >
+        {/* Header */}
+        <Header transparent />
+
+        {/* Sidebar Toggle Button (Mobile) */}
+        <button
+          onClick={() => setIsSidebarOpen(true)}
+          className="lg:hidden fixed top-20 left-4 z-30 p-2.5 bg-paper rounded-xl shadow-lg border border-stone-200 hover:bg-stone-50 transition-colors"
+          title="Sohbet Gecmisi"
+        >
+          <Menu className="w-5 h-5 text-ink" />
+        </button>
+
+        {/* Main Content */}
+        <main
+          className="relative z-20 h-full w-full flex flex-col pt-24"
+          onDragOver={handleDragOver}
+          onDragEnter={handleDragEnter}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
         {/* Full-screen drag overlay */}
         {isDragging && (
           <div className="fixed inset-0 z-50 bg-canvas/80 backdrop-blur-sm flex items-center justify-center pointer-events-none">
@@ -307,13 +529,25 @@ const Chat = () => {
           className="flex-1 overflow-y-auto w-full scroll-smooth"
         >
           <div className="max-w-3xl mx-auto px-4 md:px-6 w-full pb-48 pt-10 flex flex-col gap-12">
+            {/* Loading conversation state */}
+            {isLoadingConversation && (
+              <div className="flex flex-col items-center justify-center min-h-[35vh] opacity-90 animate-enter">
+                <div className="p-10 rounded-full glass-vellum flex flex-col items-center text-center shadow-2xl ring-1 ring-white/60">
+                  <Loader2 className="w-12 h-12 text-sepia mb-4 animate-spin" />
+                  <p className="font-serif-custom text-xl italic text-ink tracking-tight">
+                    Sohbet yukleniyor...
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Welcome State */}
-            {messages.length === 0 && (
+            {!isLoadingConversation && messages.length === 0 && (
               <div className="flex flex-col items-center justify-center min-h-[35vh] opacity-90 animate-enter">
                 <div className="p-10 rounded-full glass-vellum flex flex-col items-center text-center shadow-2xl ring-1 ring-white/60">
                   <Brain className="w-12 h-12 text-ink mb-4 stroke-[1]" />
                   <p className="font-serif-custom text-4xl italic text-ink tracking-tight">
-                    Meba AI
+                    Yediiklim AI
                   </p>
                   <p className="font-mono-custom text-[10px] text-neutral-500 mt-3 tracking-widest uppercase">
                     Kişiselleştirilmiş Öğrenci Eğitim Sohbet Motoru
@@ -711,6 +945,7 @@ const Chat = () => {
           onClick={() => setShowMobileSettings(false)}
         />
       )}
+      </div>{/* End Main Area */}
     </div>
   );
 };

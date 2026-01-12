@@ -10,6 +10,7 @@ import Dashboard from './pages/Dashboard';
 import Chat from './pages/Chat';
 import Settings from './pages/Settings';
 import Pricing from './pages/Pricing';
+import ProfileComplete from './pages/ProfileComplete';
 import NotFound from './pages/NotFound';
 
 // Context
@@ -43,6 +44,7 @@ function App() {
 
               {/* Protected Routes */}
               <Route element={<ProtectedRoute />}>
+                <Route path="/profil-tamamla" element={<ProfileComplete />} />
                 <Route path="/panel" element={<Dashboard />} />
                 <Route path="/sohbet" element={<Chat />} />
                 <Route path="/sohbet/:id" element={<Chat />} />
