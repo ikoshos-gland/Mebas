@@ -181,6 +181,7 @@ class ChatResponse(BaseModel):
     route: str = Field(..., description="Which route was taken: new_image_analysis or follow_up_chat")
     analysis_id: Optional[str] = Field(None, description="Analysis ID if new analysis was done")
     processing_time_ms: int = Field(0, description="Processing time")
+    matched_kazanimlar: List[KazanimMatch] = Field(default_factory=list, description="Matched learning objectives")
 
 
 # ================== EXAM MODELS ==================

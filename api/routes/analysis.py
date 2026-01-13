@@ -633,13 +633,24 @@ async def chat(
             context.add_message("assistant", teacher_explanation)
             
             processing_time = int((time.time() - start_time) * 1000)
-            
+
             return ChatResponse(
                 session_id=session_id,
                 response=teacher_explanation,
                 route="new_image_analysis",
                 analysis_id=result.get("analysis_id"),
-                processing_time_ms=processing_time
+                processing_time_ms=processing_time,
+                matched_kazanimlar=[
+                    KazanimMatch(
+                        code=k.get("kazanim_code", ""),
+                        description=k.get("kazanim_description", ""),
+                        score=k.get("score", 0),
+                        grade=k.get("grade"),
+                        subject=k.get("subject"),
+                        reason=None
+                    )
+                    for k in matched_kazanimlar
+                ]
             )
             
         except Exception as e:
@@ -671,14 +682,28 @@ async def chat(
             # Update chat history
             context.add_message("user", body.message or "")
             context.add_message("assistant", response)
-            
+
             processing_time = int((time.time() - start_time) * 1000)
-            
+
+            # Get kazanımlar from context for follow-up responses
+            context_kazanimlar = context.matched_kazanimlar or []
+
             return ChatResponse(
                 session_id=session_id,
                 response=response,
                 route="follow_up_chat",
-                processing_time_ms=processing_time
+                processing_time_ms=processing_time,
+                matched_kazanimlar=[
+                    KazanimMatch(
+                        code=k.get("kazanim_code", ""),
+                        description=k.get("kazanim_description", ""),
+                        score=k.get("score", 0),
+                        grade=k.get("grade"),
+                        subject=k.get("subject"),
+                        reason=None
+                    )
+                    for k in context_kazanimlar
+                ]
             )
             
         except Exception as e:

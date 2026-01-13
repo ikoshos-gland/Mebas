@@ -630,11 +630,14 @@ async def track_progress(state: QuestionAnalysisState) -> Dict[str, Any]:
     Node: Auto-track high-confidence kazanımlar to user progress.
 
     Runs AFTER rerank_results when we have final confidence scores.
-    Only tracks kazanımlar with blended_score >= CONFIDENCE_THRESHOLD (0.80).
+    Only tracks kazanımlar with blended_score >= CONFIDENCE_THRESHOLD.
 
     REQUIRES: user_id in state (from authenticated request)
     """
-    CONFIDENCE_THRESHOLD = 0.80
+    # Use config threshold for consistency with rerank_results
+    # This ensures kazanımlar that appear in response are also tracked
+    settings = get_settings()
+    CONFIDENCE_THRESHOLD = settings.rag_confidence_threshold
 
     matched = state.get("matched_kazanimlar", [])
     user_id = state.get("user_id")
