@@ -1,0 +1,1351 @@
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alchemy | Educational Intelligence</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600&amp;family=Inter:wght@200;300;400;500&amp;family=JetBrains+Mono:wght@200;300;400&amp;display=swap"
+        rel="stylesheet">
+
+    <!-- Tailwind & Icons -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Marked for Markdown Parsing (must load before usage) -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <style>
+        :root {
+            --c-paper: #FDFCF8;
+            --c-canvas: #E7E5E4;
+            --c-ink: #1C1917;
+            --c-sepia: #78350F;
+        }
+
+        body {
+            background-color: var(--c-canvas);
+            color: var(--c-ink);
+            font-family: 'Inter', sans-serif;
+        }
+
+        .font-serif-custom {
+            font-family: 'Cormorant Garamond', serif;
+        }
+
+        .font-mono-custom {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Refined Surfaces */
+        .card-surface {
+            background: #FDFCF8;
+            border: 1px solid rgba(28, 25, 23, 0.06);
+            box-shadow:
+                0 4px 6px -1px rgba(28, 25, 23, 0.02),
+                0 2px 4px -1px rgba(28, 25, 23, 0.02),
+                0 0 0 1px rgba(28, 25, 23, 0.02);
+        }
+
+        .vellum-glass {
+            background: rgba(253, 252, 248, 0.92);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            box-shadow: 0 12px 32px -8px rgba(28, 25, 23, 0.08);
+        }
+
+        /* Input Area Glass */
+        .input-glass {
+            background: rgba(253, 252, 248, 0.85);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(28, 25, 23, 0.05);
+            box-shadow: 0 -4px 20px -5px rgba(28, 25, 23, 0.05);
+        }
+
+        /* Scrollbar moved to edge, styled minimally */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(28, 25, 23, 0.15);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(120, 53, 15, 0.5);
+        }
+
+        .grid-overlay {
+            background-size: 40px 40px;
+            background-image:
+                linear-gradient(to right, rgba(28, 25, 23, 0.02) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(28, 25, 23, 0.02) 1px, transparent 1px);
+            mask-image: radial-gradient(circle at center, black 40%, transparent 100%);
+        }
+
+        .custom-toggle:checked+div {
+            background-color: var(--c-ink);
+        }
+
+        .custom-toggle:checked+div span {
+            transform: translateX(100%);
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(15px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .animate-enter {
+            animation: fadeIn 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        }
+
+        /* Fade mask for scroll container to look elegant */
+        .scroll-mask {
+            mask-image: linear-gradient(to bottom, transparent 0%, black 5%, black 90%, transparent 100%);
+            -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 5%, black 90%, transparent 100%);
+        }
+    </style>
+</head>
+
+<body class="h-screen w-screen overflow-hidden relative text-[#1C1917] selection:bg-[#78350F]/20">
+
+    <!-- 0. Background Layers -->
+    <div class="absolute inset-0 pointer-events-none grid-overlay z-0 mix-blend-multiply opacity-60"></div>
+    <div id="canvas-container" class="absolute inset-0 z-0 opacity-70"></div>
+
+    <!-- 1. Header -->
+    <header
+        class="absolute top-0 w-full z-30 px-6 py-6 md:px-8 flex justify-between items-center bg-gradient-to-b from-[#E7E5E4] via-[#E7E5E4]/90 to-transparent pointer-events-none">
+        <div class="flex items-center gap-4 pointer-events-auto">
+            <div class="w-9 h-9 border border-[#1C1917]/10 flex items-center justify-center rounded bg-[#FDFCF8] relative overflow-hidden group cursor-pointer shadow-sm transition-transform active:scale-95"
+                onclick="location.reload()">
+                <div
+                    class="absolute w-full h-[0.5px] bg-[#1C1917] rotate-45 group-hover:rotate-90 transition-transform duration-700 ease-in-out">
+                </div>
+                <div
+                    class="absolute w-full h-[0.5px] bg-[#1C1917] -rotate-45 group-hover:-rotate-90 transition-transform duration-700 ease-in-out">
+                </div>
+            </div>
+
+            <div class="flex flex-col">
+                <span class="font-serif-custom text-xl tracking-tight font-medium text-[#1C1917]">Alchemy Edu</span>
+                <span class="font-mono-custom text-[9px] uppercase tracking-widest text-[#78350F]">RAG v.1.2 //
+                    Beta</span>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-3 pointer-events-auto">
+            <button
+                class="hidden md:flex items-center gap-2 px-4 py-2 rounded-full border border-[#D6D3D1] bg-[#FDFCF8]/40 hover:bg-[#FDFCF8] hover:border-[#1C1917]/30 transition-all group backdrop-blur-sm">
+                <i data-lucide="history" class="w-3.5 h-3.5 text-[#78350F] group-hover:text-[#1C1917] opacity-70"></i>
+                <span
+                    class="font-mono-custom text-xs uppercase tracking-wider text-neutral-600 group-hover:text-[#1C1917]">History</span>
+            </button>
+
+            <button id="new-chat-btn"
+                class="flex items-center gap-2 px-5 py-2 rounded-full bg-[#1C1917] text-[#FDFCF8] hover:bg-[#78350F] transition-all shadow-lg shadow-black/5 hover:shadow-xl hover:shadow-[#78350F]/10">
+                <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                <span class="font-mono-custom text-xs uppercase tracking-wider">New Chat</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- 2. Main Layout - Full Width Container for Scrollbar Correctness -->
+    <main class="relative z-20 h-full w-full flex flex-col pt-24">
+
+        <!-- Chat Scroll Stream -->
+        <div id="chat-stream" class="flex-1 overflow-y-auto w-full scroll-smooth">
+            <!-- Inner Centered Container -->
+            <div class="max-w-3xl mx-auto px-4 md:px-6 w-full pb-48 pt-10 flex flex-col gap-12">
+
+                <!-- System Greeting (Spacer to show animation, but flexible height) -->
+                <div class="flex flex-col items-center justify-center min-h-[35vh] opacity-90 animate-enter relative">
+                    <div
+                        class="p-10 rounded-full vellum-glass flex flex-col items-center text-center shadow-2xl backdrop-blur-xl ring-1 ring-white/60">
+                        <i data-lucide="brain-circuit" class="w-12 h-12 text-[#1C1917] mb-4 stroke-[1]"></i>
+                        <p class="font-serif-custom text-4xl italic text-[#1C1917] tracking-tight">Yediiklim Okulları
+                        </p>
+                        <p class="font-mono-custom text-[10px] text-neutral-500 mt-3 tracking-widest uppercase">Kişiselleştirilmiş Öğrenci Eğitim Sohbet Motoru</p>
+                    </div>
+                </div>
+
+                <!-- Example User Message -->
+                <div class="flex justify-end animate-enter" style="animation-delay: 0.1s;">
+                    <div
+                        class="card-surface max-w-2xl px-6 py-5 rounded-2xl rounded-tr-sm shadow-sm hover:shadow-md transition-shadow duration-300">
+                        <p class="font-sans text-sm md:text-base font-light leading-relaxed text-[#1C1917]">
+                            Mitoz ve Mayoz bölünme arasındaki temel farkları tablo halinde açıklar mısın? Özellikle
+                            genetik çeşitlilik açısından.
+                        </p>
+                        <div
+                            class="mt-4 flex items-center gap-3 px-3 py-2 bg-[#F5F5F4] rounded border border-[#E7E5E4] w-fit cursor-pointer hover:border-[#D6D3D1] transition-colors">
+                            <div class="bg-white p-1 rounded border border-[#E7E5E4]">
+                                <i data-lucide="image" class="w-3 h-3 text-[#78350F]"></i>
+                            </div>
+                            <span
+                                class="font-mono-custom text-[10px] text-neutral-600 tracking-tight">cell_diagram_ref.jpg
+                                (420kb)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Example AI Response -->
+                <div class="flex gap-5 animate-enter w-full" style="animation-delay: 0.3s;">
+                    <div
+                        class="w-8 h-8 rounded-full bg-gradient-to-br from-[#1C1917] to-[#44403C] flex items-center justify-center flex-shrink-0 mt-1 shadow-lg shadow-black/10 ring-2 ring-[#FDFCF8]">
+                        <i data-lucide="sparkles" class="w-3.5 h-3.5 text-[#FDFCF8]"></i>
+                    </div>
+
+                    <div class="flex flex-col gap-4 w-full">
+                        <!-- Distinct "Paper" Card for AI -->
+                        <div class="card-surface p-8 rounded-2xl rounded-tl-sm relative overflow-hidden group">
+                            <!-- Decorative top line -->
+                            <div
+                                class="absolute top-0 left-0 w-full h-[3px] bg-gradient-to-r from-[#78350F]/40 via-[#9A3412]/30 to-transparent">
+                            </div>
+
+                            <!-- Header -->
+                            <div class="flex items-center justify-between mb-6 pb-4 border-b border-[#E7E5E4]">
+                                <span class="font-serif-custom text-lg italic text-[#78350F]">Analysis Output</span>
+                                <div class="flex items-center gap-3">
+                                    <span
+                                        class="font-mono-custom text-[9px] text-neutral-400 bg-[#F5F5F4] px-2 py-1 rounded border border-[#E7E5E4]/50">TOKENS:
+                                        482</span>
+                                    <span
+                                        class="font-mono-custom text-[9px] text-neutral-400 bg-[#F5F5F4] px-2 py-1 rounded border border-[#E7E5E4]/50">T:
+                                        0.4s</span>
+                                </div>
+                            </div>
+
+                            <!-- Content -->
+                            <div class="prose prose-sm font-sans font-light leading-7 text-[#1C1917]/90 max-w-none">
+                                <p class="mb-5">
+                                    Hücre bölünmesi süreçleri incelendiğinde, <strong
+                                        class="font-semibold text-[#78350F]">Mitoz</strong> ve <strong
+                                        class="font-semibold text-[#78350F]">Mayoz</strong> arasındaki en belirgin ayrım
+                                    genetik kopyalama mekanizmasıdır.
+                                </p>
+                                <!-- Styled List Box -->
+                                <div
+                                    class="bg-[#F5F5F4]/40 border border-[#E7E5E4] rounded-lg p-5 mb-6 hover:bg-[#F5F5F4]/60 transition-colors">
+                                    <ul class="list-disc pl-4 space-y-3 marker:text-[#78350F]">
+                                        <li><strong class="font-medium text-neutral-900">Mitoz:</strong> Genetik yapının
+                                            birebir kopyalandığı, çeşitliliğin olmadığı süreçtir (Klonlama).</li>
+                                        <li><strong class="font-medium text-neutral-900">Mayoz:</strong> "Krossing-over"
+                                            mekanizması ile genetik çeşitliliğin sağlandığı üreme hücresi oluşumudur.
+                                        </li>
+                                    </ul>
+                                </div>
+                                <p>Aşağıda talep edilen karşılaştırma matrisi sunulmuştur:</p>
+                            </div>
+
+                            <!-- Actions -->
+                            <div
+                                class="flex flex-wrap items-center gap-3 mt-8 pt-5 border-t border-[#E7E5E4]/60 opacity-60 group-hover:opacity-100 transition-opacity duration-300">
+                                <button
+                                    class="flex items-center gap-2 px-3 py-1.5 bg-[#78350F]/5 hover:bg-[#78350F]/10 border border-[#78350F]/20 rounded text-[#78350F] transition-colors shadow-sm">
+                                    <i data-lucide="book-open" class="w-3.5 h-3.5"></i>
+                                    <span
+                                        class="font-mono-custom text-[10px] uppercase tracking-wide font-medium">Biyoloji
+                                        10. Sınıf - Sayfa 42</span>
+                                </button>
+
+                                <div class="h-4 w-px bg-[#E7E5E4] mx-1"></div>
+
+                                <button
+                                    class="flex items-center gap-1.5 px-2 py-1 text-neutral-500 hover:text-[#1C1917] transition-colors rounded hover:bg-[#F5F5F4]">
+                                    <i data-lucide="wand-2" class="w-3.5 h-3.5"></i>
+                                    <span class="font-sans text-xs">Basitleştir</span>
+                                </button>
+
+                                <button
+                                    class="flex items-center gap-1.5 px-2 py-1 text-neutral-500 hover:text-[#1C1917] transition-colors rounded hover:bg-[#F5F5F4]">
+                                    <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                                    <span class="font-sans text-xs">Kopyala</span>
+                                </button>
+
+                                <div class="flex-grow"></div>
+
+                                <div class="flex items-center gap-1">
+                                    <button
+                                        class="p-1.5 hover:bg-[#F5F5F4] rounded text-neutral-400 hover:text-[#1C1917] transition-colors">
+                                        <i data-lucide="thumbs-up" class="w-3.5 h-3.5"></i>
+                                    </button>
+                                    <button
+                                        class="p-1.5 hover:bg-[#F5F5F4] rounded text-neutral-400 hover:text-[#1C1917] transition-colors">
+                                        <i data-lucide="thumbs-down" class="w-3.5 h-3.5"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. Input Area (Floating) -->
+        <div
+            class="absolute bottom-0 left-0 right-0 z-40 bg-gradient-to-t from-[#E7E5E4] via-[#E7E5E4]/80 to-transparent pt-12 pb-8 md:pb-10">
+            <div class="max-w-3xl mx-auto px-4 md:px-6">
+                <div
+                    class="input-glass rounded-2xl p-2 pl-4 flex items-end gap-3 transition-all focus-within:ring-1 focus-within:ring-[#1C1917]/10 relative overflow-hidden group">
+                    <!-- Subtle Gradient Hint at bottom of input -->
+                    <div
+                        class="absolute bottom-0 left-0 w-full h-[2px] bg-gradient-to-r from-transparent via-[#78350F]/30 to-transparent opacity-50 group-focus-within:opacity-100 transition-opacity">
+                    </div>
+
+                    <div class="flex pb-2 gap-2">
+                        <input type="file" id="file-upload-input" accept="image/*" class="hidden">
+                        <button id="upload-btn" type="button"
+                            class="p-2 rounded-lg hover:bg-[#1C1917]/5 transition-colors text-neutral-400 hover:text-[#1C1917]"
+                            title="Upload Image">
+                            <i data-lucide="paperclip" class="w-5 h-5 transition-colors stroke-[1.5]"></i>
+                        </button>
+                    </div>
+
+                    <!-- Image Preview Container (hidden by default) -->
+                    <div id="image-preview-container" class="hidden flex-shrink-0 pb-2">
+                        <div class="flex items-center gap-2 px-3 py-2 bg-[#F5F5F4] rounded-lg border border-[#E7E5E4]">
+                            <div class="bg-white p-1.5 rounded border border-[#E7E5E4]">
+                                <i data-lucide="image" class="w-4 h-4 text-[#78350F]"></i>
+                            </div>
+                            <span id="image-preview-name"
+                                class="font-mono text-xs text-neutral-600 max-w-[150px] truncate"></span>
+                            <button id="remove-image-btn" type="button"
+                                class="p-1 hover:bg-neutral-200 rounded transition-colors">
+                                <i data-lucide="x" class="w-3 h-3 text-neutral-500"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <textarea rows="1" placeholder="Ask about your curriculum..."
+                        class="w-full bg-transparent border-0 focus:ring-0 p-3 pb-3 font-sans text-base font-light text-[#1C1917] placeholder:text-neutral-400 resize-none max-h-32 leading-relaxed"
+                        oninput="this.style.height = ''; this.style.height = this.scrollHeight + 'px'"></textarea>
+
+                    <button id="send-btn"
+                        class="mb-1 p-2.5 bg-[#1C1917] text-[#FDFCF8] rounded-xl hover:bg-[#78350F] transition-all shadow-md active:scale-95">
+                        <i data-lucide="arrow-up" class="w-5 h-5 stroke-[1.5]"></i>
+                    </button>
+                </div>
+
+                <div class="text-center mt-3">
+                    <span
+                        class="font-mono-custom text-[9px] text-neutral-500 tracking-widest uppercase flex items-center justify-center gap-2">
+                        <span class="w-1 h-1 rounded-full bg-green-500"></span>
+                        AI verification required
+                    </span>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- 4. Settings Panel -->
+    <div class="absolute top-24 right-6 w-64 card-surface rounded-xl z-30 animate-enter hidden xl:block shadow-lg"
+        style="animation-delay: 0.5s;">
+        <div class="border-b border-[#E7E5E4] px-4 py-3 flex justify-between items-center bg-[#F5F5F4]/50 rounded-t-xl">
+            <span class="font-serif-custom italic text-base text-[#1C1917]">Calibration</span>
+            <div class="w-1.5 h-1.5 rounded-full bg-green-500/80 shadow-[0_0_8px_rgba(34,197,94,0.4)]"></div>
+        </div>
+
+        <div class="p-4 space-y-5">
+            <div class="space-y-2">
+                <label class="font-mono-custom text-[10px] tracking-widest text-neutral-500 uppercase">Grade
+                    Level</label>
+                <div class="relative group">
+                    <select
+                        class="w-full appearance-none bg-[#FDFCF8] border border-[#E7E5E4] text-[#1C1917] text-xs font-sans p-2.5 rounded-lg hover:border-[#1C1917]/30 focus:outline-none focus:border-[#78350F] transition-colors cursor-pointer shadow-sm">
+                        <option>Grade 9</option>
+                        <option selected="">Grade 10</option>
+                        <option>Grade 11</option>
+                        <option>Grade 12</option>
+                    </select>
+                    <i data-lucide="chevron-down"
+                        class="absolute right-3 top-3 w-3.5 h-3.5 text-neutral-400 pointer-events-none group-hover:text-[#1C1917]"></i>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-between">
+                <span class="font-mono-custom text-[10px] tracking-widest text-neutral-500 uppercase">Exam Mode</span>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" value="" class="sr-only peer custom-toggle">
+                    <div
+                        class="w-9 h-5 bg-[#E7E5E4] peer-focus:outline-none rounded-full peer transition-colors duration-300">
+                        <span
+                            class="absolute top-[2px] left-[2px] bg-[#FDFCF8] border border-gray-300 h-4 w-4 rounded-full transition-transform duration-300 shadow-sm"></span>
+                    </div>
+                </label>
+            </div>
+
+            <div
+                class="pt-3 border-t border-[#E7E5E4] flex justify-between text-[10px] font-mono-custom text-neutral-400">
+                <span>Subject</span>
+                <span class="text-[#78350F] font-medium">Biology</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 5. WebGL Background Script -->
+    <script type="x-shader/x-vertex" id="vertexShader">
+        uniform float uTime;
+        uniform float uDistortion; 
+        uniform float uSize;       
+        uniform vec2 uMouse;
+        varying float vNoise;
+        
+        vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+        vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+        vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+        vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+        float snoise(vec3 v) {
+            const vec2  C = vec2(1.0/6.0, 1.0/3.0) ;
+            const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
+            vec3 i  = floor(v + dot(v, C.yyy) );
+            vec3 x0 = v - i + dot(i, C.xxx) ;
+            vec3 g = step(x0.yzx, x0.xyz);
+            vec3 l = 1.0 - g;
+            vec3 i1 = min( g.xyz, l.zxy );
+            vec3 i2 = max( g.xyz, l.zxy );
+            vec3 x1 = x0 - i1 + 1.0 * C.xxx;
+            vec3 x2 = x0 - i2 + 2.0 * C.xxx;
+            vec3 x3 = x0 - 1.0 + 3.0 * C.xxx;
+            i = mod289(i);
+            vec4 p = permute( permute( permute(
+                        i.z + vec4(0.0, i1.z, i2.z, 1.0 ))
+                    + i.y + vec4(0.0, i1.y, i2.y, 1.0 ))
+                    + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
+            float n_ = 1.0/7.0;
+            vec3  ns = n_ * D.wyz - D.xzx;
+            vec4 j = p - 49.0 * floor(p * ns.z *ns.z);
+            vec4 x_ = floor(j * ns.z);
+            vec4 y_ = floor(j - 7.0 * x_ );
+            vec4 x = x_ *ns.x + ns.yyyy;
+            vec4 y = y_ *ns.x + ns.yyyy;
+            vec4 h = 1.0 - abs(x) - abs(y);
+            vec4 b0 = vec4( x.xy, y.xy );
+            vec4 b1 = vec4( x.zw, y.zw );
+            vec4 s0 = floor(b0)*2.0 + 1.0;
+            vec4 s1 = floor(b1)*2.0 + 1.0;
+            vec4 sh = -step(h, vec4(0.0));
+            vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy ;
+            vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww ;
+            vec3 p0 = vec3(a0.xy,h.x);
+            vec3 p1 = vec3(a0.zw,h.y);
+            vec3 p2 = vec3(a1.xy,h.z);
+            vec3 p3 = vec3(a1.zw,h.w);
+            vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+            p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+            vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+            m = m * m;
+            return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3) ) );
+        }
+        void main() {
+            vec3 pos = position;
+            float noiseFreq = 0.5;
+            float noiseAmp = uDistortion;
+            float noise = snoise(vec3(pos.x * noiseFreq + uTime * 0.1, pos.y * noiseFreq, pos.z * noiseFreq));
+            vNoise = noise;
+            vec3 newPos = pos + (normalize(pos) * noise * noiseAmp);
+            float dist = distance(uMouse * 10.0, newPos.xy);
+            float interaction = smoothstep(5.0, 0.0, dist);
+            newPos += normalize(pos) * interaction * 0.5;
+            vec4 mvPosition = modelViewMatrix * vec4(newPos, 1.0);
+            gl_Position = projectionMatrix * mvPosition;
+            gl_PointSize = uSize * (24.0 / -mvPosition.z) * (1.0 + noise * 0.5);
+        }
+    </script>
+    <script type="x-shader/x-fragment" id="fragmentShader">
+        uniform vec3 uColor;
+        uniform float uOpacity;
+        varying float vNoise;
+        void main() {
+            vec2 center = gl_PointCoord - vec2(0.5);
+            float dist = length(center);
+            if (dist > 0.5) discard;
+            float alpha = smoothstep(0.5, 0.2, dist) * uOpacity;
+            // Slightly warmer grey particles to match the stone theme
+            vec3 darkColor = uColor * 0.6; 
+            vec3 lightColor = uColor * 1.6;
+            vec3 finalColor = mix(darkColor, lightColor, vNoise * 0.5 + 0.5);
+            gl_FragColor = vec4(finalColor, alpha);
+        }
+    </script>
+
+    <script>
+        lucide.createIcons();
+
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        // Fog matches the bg
+        scene.fog = new THREE.FogExp2(0xE7E5E4, 0.03);
+
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 0, 18);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        const systemsGroup = new THREE.Group();
+        // Lifted slightly so it centers better behind the new chat layout
+        systemsGroup.position.set(0, 1, 0);
+        scene.add(systemsGroup);
+
+        const geometry = new THREE.IcosahedronGeometry(4.8, 32);
+        const uniforms = {
+            uTime: { value: 0 },
+            uDistortion: { value: 0.55 },
+            uSize: { value: 2.2 },
+            uColor: { value: new THREE.Color('#292524') }, // Warm grey/stone dark
+            uOpacity: { value: 0.4 },
+            uMouse: { value: new THREE.Vector2(0, 0) }
+        };
+
+        const material = new THREE.ShaderMaterial({
+            vertexShader: document.getElementById('vertexShader').textContent,
+            fragmentShader: document.getElementById('fragmentShader').textContent,
+            uniforms: uniforms,
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.NormalBlending
+        });
+
+        const particles = new THREE.Points(geometry, material);
+        systemsGroup.add(particles);
+
+        // Thin Orbits
+        const lineGroup = new THREE.Group();
+        systemsGroup.add(lineGroup);
+
+        function createThinOrbit(radius, rotation) {
+            const curve = new THREE.EllipseCurve(0, 0, radius, radius, 0, 2 * Math.PI, false, 0);
+            const points = curve.getPoints(128);
+            const geo = new THREE.BufferGeometry().setFromPoints(points);
+            const mat = new THREE.LineBasicMaterial({ color: 0x78350F, transparent: true, opacity: 0.08 });
+            const orbit = new THREE.Line(geo, mat);
+            orbit.rotation.set(rotation.x, rotation.y, 0);
+            lineGroup.add(orbit);
+            return orbit;
+        }
+
+        const orbits = [
+            createThinOrbit(5.8, { x: Math.PI / 2, y: 0 }),
+            createThinOrbit(6.2, { x: Math.PI / 3, y: Math.PI / 6 }),
+            createThinOrbit(6.8, { x: Math.PI / 1.8, y: Math.PI / 4 })
+        ];
+
+        let time = 0;
+        let mouseX = 0, mouseY = 0;
+
+        document.addEventListener('mousemove', (e) => {
+            mouseX = (e.clientX / window.innerWidth) * 2 - 1;
+            mouseY = -(e.clientY / window.innerHeight) * 2 + 1;
+            uniforms.uMouse.value.x += (mouseX - uniforms.uMouse.value.x) * 0.05;
+            uniforms.uMouse.value.y += (mouseY - uniforms.uMouse.value.y) * 0.05;
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+            time += 0.008;
+            systemsGroup.rotation.y = time * 0.03;
+            lineGroup.rotation.x = Math.sin(time * 0.05) * 0.05;
+            uniforms.uTime.value = time;
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+
+    <!-- 6. Image Modal -->
+    <div id="image-modal"
+        class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+        onclick="this.classList.add('hidden')">
+        <div class="relative max-w-4xl w-full max-h-[90vh] bg-[#FDFCF8] rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+            onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center p-4 border-b border-[#E7E5E4]">
+                <h3 class="font-serif-custom text-lg italic text-[#1C1917]" id="modal-caption">Image Viewer</h3>
+                <button onclick="document.getElementById('image-modal').classList.add('hidden')"
+                    class="p-2 hover:bg-[#E7E5E4] rounded-full transition-colors">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div class="flex-1 overflow-auto bg-[#E7E5E4]/20 flex items-center justify-center p-4">
+                <img id="modal-image" src="" alt="Textbook Image"
+                    class="max-w-full max-h-full object-contain rounded shadow-sm">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // STATE MANAGEMENT & CONFIG
+        // ==========================================
+        const API_BASE_URL = 'http://localhost:8001'; // Docker mapped port
+
+        const state = {
+            thread_id: crypto.randomUUID(),
+            grade: 10,
+            subject: 'Biyoloji', // Default for demo
+            is_exam_mode: false,
+            current_image: null, // Base64 string
+            current_image_file: null, // File object
+            is_loading: false
+        };
+
+        // DOM Elements - use IDs instead of icon-based selectors (icons created after page load)
+        const elements = {
+            chatStream: document.getElementById('chat-stream'),
+            chatContainer: document.querySelector('#chat-stream > div'),
+            inputArea: document.querySelector('textarea'),
+            sendButton: document.getElementById('send-btn'),
+            fileInput: document.getElementById('file-upload-input'),
+            uploadBtn: document.getElementById('upload-btn'),
+            imagePreviewContainer: document.getElementById('image-preview-container'),
+            imagePreviewName: document.getElementById('image-preview-name'),
+            removeImageBtn: document.getElementById('remove-image-btn'),
+            gradeSelect: document.querySelector('select'),
+            examToggle: document.querySelector('.custom-toggle'),
+            newChatBtn: document.getElementById('new-chat-btn')
+        };
+
+        // Attach send button click handler
+        elements.sendButton.addEventListener('click', handleSend);
+
+        // ==========================================
+        // EVENT LISTENERS
+        // ==========================================
+
+        // 1. Settings
+        elements.gradeSelect.addEventListener('change', (e) => {
+            const val = e.target.value.replace('Grade ', '');
+            state.grade = parseInt(val);
+            console.log('Grade updated:', state.grade);
+        });
+
+        elements.examToggle.addEventListener('change', (e) => {
+            state.is_exam_mode = e.target.checked;
+            console.log('Exam mode:', state.is_exam_mode);
+        });
+
+        elements.newChatBtn.addEventListener('click', () => {
+            if (confirm('Start a new chat session?')) {
+                location.reload();
+            }
+        });
+
+        // 2. File Upload Handling
+        // Click on upload button triggers file input
+        elements.uploadBtn.addEventListener('click', () => {
+            elements.fileInput.click();
+        });
+
+        // Helper function to show image preview
+        function showImagePreview(fileName) {
+            elements.imagePreviewName.textContent = fileName;
+            elements.imagePreviewContainer.classList.remove('hidden');
+            elements.uploadBtn.classList.add('bg-[#78350F]/10', 'text-[#78350F]');
+            const icon = elements.uploadBtn.querySelector('i');
+            icon.setAttribute('data-lucide', 'image');
+            lucide.createIcons();
+        }
+
+        // Helper function to hide image preview and clear state
+        function clearImageSelection() {
+            state.current_image = null;
+            state.current_image_file = null;
+            elements.fileInput.value = '';
+            elements.imagePreviewContainer.classList.add('hidden');
+            elements.imagePreviewName.textContent = '';
+            elements.uploadBtn.classList.remove('bg-[#78350F]/10', 'text-[#78350F]');
+            const icon = elements.uploadBtn.querySelector('i');
+            icon.setAttribute('data-lucide', 'paperclip');
+            lucide.createIcons();
+        }
+
+        // Remove image button handler
+        elements.removeImageBtn.addEventListener('click', () => {
+            clearImageSelection();
+        });
+
+        elements.fileInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            if (file.size > 10 * 1024 * 1024) {
+                alert('Dosya çok büyük (Maks 10MB)');
+                return;
+            }
+
+            state.current_image_file = file;
+
+            // Convert to Base64 for preview and sending
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                state.current_image = e.target.result; // Data URL
+                showImagePreview(file.name);
+                console.log('Image loaded successfully:', file.name);
+            };
+            reader.readAsDataURL(file);
+        });
+
+        // Helper function to process dropped/selected image file
+        function processImageFile(file) {
+            if (!file || !file.type.startsWith('image/')) {
+                alert('Lütfen bir görsel dosyası seçin');
+                return;
+            }
+
+            if (file.size > 10 * 1024 * 1024) {
+                alert('Dosya çok büyük (Maks 10MB)');
+                return;
+            }
+
+            state.current_image_file = file;
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                state.current_image = e.target.result;
+                showImagePreview(file.name);
+                console.log('Image loaded successfully:', file.name);
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // 2b. Drag and Drop Handling
+        const inputContainer = document.querySelector('.input-glass');
+
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            inputContainer.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+            });
+        });
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            inputContainer.addEventListener(eventName, () => {
+                inputContainer.classList.add('ring-2', 'ring-[#78350F]', 'bg-[#78350F]/5');
+            });
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            inputContainer.addEventListener(eventName, () => {
+                inputContainer.classList.remove('ring-2', 'ring-[#78350F]', 'bg-[#78350F]/5');
+            });
+        });
+
+        inputContainer.addEventListener('drop', (e) => {
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                processImageFile(files[0]);
+            }
+        });
+
+        // 3. Sending Messages
+        // elements.sendButton.addEventListener('click', handleSend); // Moved to debug block above
+        elements.inputArea.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+            }
+        });
+
+        async function handleSend() {
+            try {
+                // Critical Element Check
+                if (!elements.chatContainer) {
+                    console.error('Chat container not found! Selector: #chat-stream > div');
+                    alert('Hata: Sohbet alanı bulunamadı. Lütfen sayfayı yenileyin.');
+                    return;
+                }
+
+                const text = elements.inputArea.value.trim();
+                // If loading, ignore
+                if (state.is_loading) return;
+                // If no text and no image, ignore
+                if (!text && !state.current_image) return;
+
+                // Store image info before clearing
+                const imageName = state.current_image_file?.name;
+                const imageBase64 = state.current_image ? state.current_image.split(',')[1] : null;
+
+                // UI Updates
+                state.is_loading = true;
+                elements.inputArea.value = '';
+                elements.inputArea.disabled = true;
+
+                // Hide image preview and reset state
+                try {
+                    elements.imagePreviewContainer.classList.add('hidden');
+                    elements.uploadBtn.classList.remove('bg-[#78350F]/10', 'text-[#78350F]');
+                    const icon = elements.uploadBtn.querySelector('i');
+                    if (icon) icon.setAttribute('data-lucide', 'paperclip');
+                    if (window.lucide) window.lucide.createIcons();
+                } catch (uiError) {
+                    console.warn('UI update error (non-fatal):', uiError);
+                }
+
+                // 1. Render User Message
+                appendUserMessage(text, imageName);
+
+                // 2. Prepare Payload
+                const payload = {
+                    question_text: text,
+                    question_image_base64: imageBase64,
+                    grade: state.grade,
+                    subject: state.subject,
+                    is_exam_mode: state.is_exam_mode,
+                    thread_id: state.thread_id
+                };
+
+                // Clear image state after sending
+                const usedImage = state.current_image;
+                state.current_image = null;
+                state.current_image_file = null;
+                if (elements.fileInput) elements.fileInput.value = '';
+
+                // 3. Create Placeholder for AI Response
+                const aiMessageId = appendAIPlaceholder();
+                const aiContentContainer = document.getElementById(aiMessageId)?.querySelector('.prose');
+
+                if (!aiContentContainer) {
+                    throw new Error('AI message placeholder could not be created');
+                }
+
+                try {
+                    // 4. API Call
+                    if (usedImage) {
+                        // Image analysis - standard request
+                        const response = await fetch(`${API_BASE_URL}/analyze/image`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                image_base64: payload.question_image_base64,
+                                grade: payload.grade,
+                                subject: payload.subject,
+                                is_exam_mode: payload.is_exam_mode
+                            })
+                        });
+                        if (!response.ok) throw new Error(`API Error: ${response.status}`);
+                        const data = await response.json();
+                        updateAIResponse(aiMessageId, data);
+                    } else {
+                        // Text analysis - stream
+                        const response = await fetch(`${API_BASE_URL}/analyze/text-stream`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                question_text: payload.question_text,
+                                grade: payload.grade,
+                                subject: payload.subject,
+                                is_exam_mode: payload.is_exam_mode
+                            })
+                        });
+
+                        if (!response.ok) throw new Error(`API Error: ${response.status}`);
+
+                        const reader = response.body.getReader();
+                        const decoder = new TextDecoder();
+                        let ragData = null;
+                        let teacherContent = '';
+
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+
+                            const chunk = decoder.decode(value);
+                            const chunks = chunk.split('\n\n'); // SSE messages separated by double newline
+
+                            for (const msg of chunks) {
+                                if (!msg.trim()) continue;
+                                const lines = msg.split('\n');
+                                for (const line of lines) {
+                                    if (line.startsWith('data: ')) {
+                                        try {
+                                            const eventData = JSON.parse(line.slice(6));
+
+                                            // Handle different event formats (object with event field or direct data)
+                                            // Our backend sends {event: "...", data: ...} or {event: "done"}
+
+                                            const eventType = eventData.event;
+
+                                            if (eventType === 'rag_complete') {
+                                                ragData = eventData.data;
+                                                updateAIResponseStreaming(aiMessageId, ragData, '');
+                                            } else if (eventType === 'teacher_token') {
+                                                teacherContent += eventData.token;
+                                                updateAIResponseStreaming(aiMessageId, ragData, teacherContent);
+                                            } else if (eventType === 'done') {
+                                                if (ragData) {
+                                                    ragData.teacher_explanation = teacherContent;
+                                                    updateAIResponse(aiMessageId, ragData);
+                                                }
+                                            } else if (eventType === 'error') {
+                                                throw new Error(eventData.error);
+                                            }
+                                        } catch (e) {
+                                            console.warn('SSE Parse Error:', e, line);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                } catch (apiError) {
+                    console.error('API Call Failed:', apiError);
+                    if (aiContentContainer) {
+                        aiContentContainer.innerHTML = `<p class="text-red-600">Bağlantı hatası: ${apiError.message}. Lütfen Docker API'nin çalıştığından emin olun.</p>`;
+                    }
+                } finally {
+                    state.is_loading = false;
+                    elements.inputArea.disabled = false;
+                    elements.inputArea.focus();
+                }
+
+            } catch (err) {
+                console.error('Critical Error in handleSend:', err);
+                alert(`Beklenmeyen bir hata oluştu:\n${err.message}`);
+                state.is_loading = false;
+                elements.inputArea.disabled = false;
+            }
+        }
+
+        // ==========================================
+        // UI RENDERING HELPERS
+        // ==========================================
+
+        function appendUserMessage(text, imageName) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'flex justify-end animate-enter';
+
+            let imageHtml = '';
+            if (imageName) {
+                imageHtml = `
+                <div class="mt-4 flex items-center gap-3 px-3 py-2 bg-[#F5F5F4] rounded border border-[#E7E5E4] w-fit">
+                    <div class="bg-white p-1 rounded border border-[#E7E5E4]">
+                        <i data-lucide="image" class="w-3 h-3 text-[#78350F]"></i>
+                    </div>
+                    <span class="font-mono-custom text-[10px] text-neutral-600 tracking-tight">${imageName}</span>
+                </div>`;
+            }
+
+            msgDiv.innerHTML = `
+                <div class="card-surface max-w-2xl px-6 py-5 rounded-2xl rounded-tr-sm shadow-sm">
+                    <p class="font-sans text-sm md:text-base font-light leading-relaxed text-[#1C1917] whitespace-pre-wrap">${text}</p>
+                    ${imageHtml}
+                </div>
+            `;
+
+            elements.chatContainer.appendChild(msgDiv);
+            scrollToBottom();
+            lucide.createIcons();
+        }
+
+        function appendAIPlaceholder() {
+            const id = 'msg-' + Date.now();
+            const msgDiv = document.createElement('div');
+            msgDiv.id = id;
+            msgDiv.className = 'flex gap-5 animate-enter w-full';
+
+            msgDiv.innerHTML = `
+                <div class="w-8 h-8 rounded-full bg-gradient-to-br from-[#1C1917] to-[#44403C] flex items-center justify-center flex-shrink-0 mt-1 shadow-lg shadow-black/10 ring-2 ring-[#FDFCF8]">
+                    <i data-lucide="loader-2" class="w-3.5 h-3.5 text-[#FDFCF8] animate-spin"></i>
+                </div>
+                <div class="flex flex-col gap-4 w-full">
+                    <div class="card-surface p-8 rounded-2xl rounded-tl-sm relative overflow-hidden">
+                        <!-- Loading Skeleton -->
+                        <div class="animate-pulse space-y-3 max-w-lg">
+                            <div class="h-2 bg-neutral-200 rounded col-span-2"></div>
+                            <div class="h-2 bg-neutral-200 rounded col-span-1"></div>
+                        </div>
+                        <div class="prose mt-4"></div>
+                    </div>
+                </div>
+            `;
+
+            elements.chatContainer.appendChild(msgDiv);
+            scrollToBottom();
+            lucide.createIcons();
+            return id;
+        }
+
+
+
+        function showImage(imageId, caption) {
+            const modal = document.getElementById('image-modal');
+            const img = document.getElementById('modal-image');
+            const cap = document.getElementById('modal-caption');
+
+            img.src = `${API_BASE_URL}/content/images/${imageId}`;
+            cap.innerText = caption || 'Textbook Figure';
+
+            modal.classList.remove('hidden');
+        }
+        // Streaming version - updates UI incrementally as tokens arrive
+        function updateAIResponseStreaming(elementId, ragData, teacherContent) {
+            const container = document.getElementById(elementId);
+            if (!container) return;
+
+            // Change spinner to typing indicator
+            const iconContainer = container.querySelector('.w-8.h-8');
+            iconContainer.innerHTML = `<i data-lucide="sparkles" class="w-3.5 h-3.5 text-[#FDFCF8]"></i>`;
+
+            // Build Kazanım Cards (from RAG data)
+            let kazanimlarHtml = '';
+            if (ragData?.matched_kazanimlar?.length > 0) {
+                kazanimlarHtml = `
+                    <div class="mb-6">
+                        <h3 class="font-serif-custom text-base italic text-[#78350F] mb-3 flex items-center gap-2">
+                            <i data-lucide="target" class="w-4 h-4"></i>
+                            Eşleşen Kazanımlar
+                        </h3>
+                        <div class="space-y-3">
+                            ${ragData.matched_kazanimlar.slice(0, 5).map(k => `
+                                <div class="bg-[#F5F5F4]/60 rounded-lg p-4 border border-[#E7E5E4]">
+                                    <div class="flex items-start justify-between gap-3 mb-2">
+                                        <span class="font-mono-custom text-xs font-semibold text-[#78350F] bg-[#78350F]/10 px-2 py-1 rounded">${k.code || 'Kazanım'}</span>
+                                        <div class="flex items-center gap-2">
+                                            ${k.grade ? `<span class="font-mono-custom text-[10px] text-neutral-500 bg-white px-2 py-0.5 rounded border border-[#E7E5E4]">${k.grade}. Sınıf</span>` : ''}
+                                            <span class="font-mono-custom text-[10px] text-neutral-400">%${(k.score * 100).toFixed(0)}</span>
+                                        </div>
+                                    </div>
+                                    <p class="text-sm text-[#1C1917]/80 leading-relaxed line-clamp-2">${k.description || ''}</p>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Build Textbook References
+            let textbookHtml = '';
+            if (ragData?.textbook_references?.length > 0) {
+                textbookHtml = `
+                    <div class="mb-6">
+                        <h3 class="font-serif-custom text-base italic text-[#78350F] mb-3 flex items-center gap-2">
+                            <i data-lucide="book-open" class="w-4 h-4"></i>
+                            Ders Kitabı Referansları
+                        </h3>
+                        <div class="space-y-2">
+                            ${ragData.textbook_references.slice(0, 3).map(ref => `
+                                <div class="bg-white rounded-lg p-3 border border-[#E7E5E4]">
+                                    <div class="flex items-center justify-between">
+                                        <span class="font-mono-custom text-xs font-medium text-[#1C1917]">${ref.chapter || 'Bölüm'}</span>
+                                        ${ref.pages ? `<span class="font-mono-custom text-[10px] text-[#78350F] bg-[#78350F]/5 px-2 py-0.5 rounded">Sayfa ${ref.pages}</span>` : ''}
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Teacher explanation (streaming)
+            let teacherHtml = '';
+            if (teacherContent) {
+                teacherHtml = `
+                    <div class="mb-6 bg-gradient-to-br from-[#78350F]/5 to-[#9A3412]/5 rounded-xl p-5 border border-[#78350F]/20">
+                        <div class="flex items-center gap-3 mb-4">
+                            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-[#78350F] to-[#9A3412] flex items-center justify-center shadow-lg">
+                                <i data-lucide="graduation-cap" class="w-5 h-5 text-white"></i>
+                            </div>
+                            <div>
+                                <span class="font-serif-custom text-base font-medium text-[#78350F]">Öğretmen Açıklaması</span>
+                                <span class="text-xs text-neutral-400 ml-2 font-mono-custom">GPT-5.2 <span class="animate-pulse">●</span></span>
+                            </div>
+                        </div>
+                        <div class="prose prose-sm max-w-none font-sans leading-7 text-[#1C1917]/90">
+                            ${marked.parse(teacherContent)}
+                        </div>
+                    </div>
+                `;
+            } else {
+                teacherHtml = `
+                    <div class="mb-6 bg-gradient-to-br from-[#78350F]/5 to-[#9A3412]/5 rounded-xl p-5 border border-[#78350F]/20">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-[#78350F] to-[#9A3412] flex items-center justify-center shadow-lg animate-pulse">
+                                <i data-lucide="graduation-cap" class="w-5 h-5 text-white"></i>
+                            </div>
+                            <div>
+                                <span class="font-serif-custom text-base font-medium text-[#78350F]">Öğretmen Açıklaması</span>
+                                <span class="text-xs text-neutral-400 ml-2 font-mono-custom">Hazırlanıyor...</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            const confidenceValue = ragData?.confidence || 0;
+
+            const htmlContent = `
+                <div class="card-surface p-8 rounded-2xl rounded-tl-sm relative overflow-hidden">
+                     <div class="absolute top-0 left-0 w-full h-[3px] bg-gradient-to-r from-[#78350F]/40 via-[#9A3412]/30 to-transparent"></div>
+                     
+                     <div class="flex items-center justify-between mb-6 pb-4 border-b border-[#E7E5E4]">
+                        <span class="font-serif-custom text-lg italic text-[#78350F]">Analiz Sonucu</span>
+                         <div class="flex items-center gap-3">
+                            <span class="font-mono-custom text-[9px] text-neutral-400 bg-[#F5F5F4] px-2 py-1 rounded border border-[#E7E5E4]/50">GÜVEN: ${(confidenceValue * 100).toFixed(0)}%</span>
+                        </div>
+                    </div>
+
+                    <!-- Teacher Explanation (streaming) -->
+                    ${teacherHtml}
+
+                    <!-- Kazanımlar Section -->
+                    ${kazanimlarHtml}
+
+                    <!-- Textbook References Section -->
+                    ${textbookHtml}
+                </div>
+            `;
+
+            container.querySelector('.flex.flex-col').innerHTML = htmlContent;
+            lucide.createIcons();
+            scrollToBottom();
+        }
+
+        function updateAIResponse(elementId, output) {
+            const container = document.getElementById(elementId);
+            if (!container) return;
+
+            // Remove spinner, put branding
+            const iconContainer = container.querySelector('.w-8.h-8');
+            iconContainer.innerHTML = `<i data-lucide="sparkles" class="w-3.5 h-3.5 text-[#FDFCF8]"></i>`;
+
+            // Build Textbook References HTML
+            let textbookHtml = '';
+            if (output.textbook_references && output.textbook_references.length > 0) {
+                textbookHtml = `
+                    <div class="mb-6">
+                        <h3 class="font-serif-custom text-base italic text-[#78350F] mb-3 flex items-center gap-2">
+                            <i data-lucide="book-open" class="w-4 h-4"></i>
+                            Ders Kitabı Referansları
+                        </h3>
+                        <div class="space-y-3">
+                            ${output.textbook_references.slice(0, 3).map(ref => `
+                                <div class="bg-white rounded-lg p-4 border border-[#E7E5E4] shadow-sm">
+                                    <div class="flex items-center justify-between mb-2">
+                                        <span class="font-mono-custom text-xs font-medium text-[#1C1917]">${ref.chapter || 'Bölüm'}</span>
+                                        ${ref.pages ? `<span class="font-mono-custom text-[10px] text-[#78350F] bg-[#78350F]/5 px-2 py-0.5 rounded">Sayfa ${ref.pages}</span>` : ''}
+                                    </div>
+                                    ${ref.content ? `<p class="text-sm text-neutral-600 leading-relaxed line-clamp-3">${ref.content.substring(0, 300)}${ref.content.length > 300 ? '...' : ''}</p>` : ''}
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Summary text
+            const summaryText = output.summary || 'Analiz tamamlandı.';
+            const confidenceValue = output.confidence || 0;
+
+            // 1. Matched Kazanımlar (Move logic here but keep separate variable)
+            let kazanimlarHtml = '';
+            if (output.matched_kazanimlar && output.matched_kazanimlar.length > 0) {
+                kazanimlarHtml = `
+                    <div class="mb-6">
+                        <h3 class="font-serif-custom text-base italic text-[#78350F] mb-3 flex items-center gap-2">
+                            <i data-lucide="target" class="w-4 h-4"></i>
+                            Eşleşen Kazanımlar
+                        </h3>
+                        <div class="space-y-3">
+                            ${output.matched_kazanimlar.slice(0, 5).map(k => `
+                                <div class="bg-[#F5F5F4]/60 rounded-lg p-4 border border-[#E7E5E4] hover:border-[#78350F]/30 transition-colors">
+                                    <div class="flex items-start justify-between gap-3 mb-2">
+                                        <span class="font-mono-custom text-xs font-semibold text-[#78350F] bg-[#78350F]/10 px-2 py-1 rounded">${k.code || 'Kazanım'}</span>
+                                        <div class="flex items-center gap-2">
+                                            ${k.grade ? `<span class="font-mono-custom text-[10px] text-neutral-500 bg-white px-2 py-0.5 rounded border border-[#E7E5E4]">${k.grade}. Sınıf</span>` : ''}
+                                            <span class="font-mono-custom text-[10px] text-neutral-400">%${(k.score * 100).toFixed(0)}</span>
+                                        </div>
+                                    </div>
+                                    <p class="text-sm text-[#1C1917]/80 leading-relaxed line-clamp-2 hover:line-clamp-none transition-all cursor-pointer" title="Tamamını görmek için üzerine gelin">${k.description || ''}</p>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // 2. Solution Steps HTML (NEW)
+            let solutionHtml = '';
+            if (output.solution_steps && output.solution_steps.length > 0) {
+                solutionHtml = `
+                    <div class="mb-6">
+                         <h3 class="font-serif-custom text-lg italic text-[#1C1917] mb-4 flex items-center gap-2">
+                            <i data-lucide="list-checks" class="w-5 h-5 text-[#78350F]"></i>
+                            Çözüm Adımları
+                        </h3>
+                        <div class="space-y-4 relative">
+                            <!-- Vertical connector line -->
+                            <div class="absolute left-[15px] top-4 bottom-4 w-[1px] bg-[#E7E5E4] -z-10"></div>
+                            
+                            ${output.solution_steps.map((step, idx) => `
+                                <div class="flex gap-4 group">
+                                    <div class="flex-shrink-0 w-8 h-8 rounded-full bg-white border border-[#E7E5E4] flex items-center justify-center font-mono-custom text-xs text-[#78350F] shadow-sm group-hover:border-[#78350F]/40 transition-colors">
+                                        ${step.step_number || idx + 1}
+                                    </div>
+                                    <div class="flex-1 bg-white/50 rounded-lg p-3 border border-[#E7E5E4] hover:bg-white transition-colors">
+                                        <p class="text-sm text-[#1C1917] font-medium mb-1">${step.description}</p>
+                                        ${step.result ? `<div class="text-xs font-mono-custom text-[#78350F] bg-[#78350F]/5 p-2 rounded border border-[#78350F]/10">➔ ${step.result}</div>` : ''}
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // 3. Final Answer HTML (NEW)
+            let finalAnswerHtml = '';
+            if (output.final_answer) {
+                finalAnswerHtml = `
+                    <div class="mb-6 p-1 bg-gradient-to-br from-[#78350F]/20 to-[#9A3412]/20 rounded-xl">
+                        <div class="bg-[#FDFCF8] rounded-lg p-5 border border-[#78350F]/10 flex flex-col items-center text-center">
+                            <span class="font-mono-custom text-[10px] text-[#78350F] uppercase tracking-widest mb-1">Doğru Cevap</span>
+                            <div class="font-serif-custom text-2xl text-[#1C1917] font-medium">
+                                ${output.final_answer}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // 4. Prerequisite Gaps / Warnings (NEW)
+            let gapsHtml = '';
+            if (output.prerequisite_gaps && output.prerequisite_gaps.length > 0) {
+                gapsHtml = `
+                     <div class="mb-6 bg-amber-50 rounded-xl p-4 border border-amber-200/60">
+                        <h4 class="font-serif-custom text-base text-amber-900 mb-2 flex items-center gap-2">
+                            <i data-lucide="alert-triangle" class="w-4 h-4"></i>
+                            Dikkat Edilmesi Gereken Noktalar
+                        </h4>
+                        <ul class="space-y-2">
+                             ${output.prerequisite_gaps.map(gap => `
+                                <li class="text-sm text-amber-800/90 flex gap-2">
+                                    <span class="text-amber-500">•</span>
+                                    <span>${gap.missing_kazanim_description || gap.suggestion || 'Eksik bilgi tespit edildi.'}</span>
+                                </li>
+                            `).join('')}
+                        </ul>
+                    </div>
+                `;
+            }
+
+            // Teacher explanation (GPT-5.2 synthesized)
+            let teacherHtml = '';
+            if (output.teacher_explanation) {
+                teacherHtml = `
+                    <div class="mb-6 bg-gradient-to-br from-[#78350F]/5 to-[#9A3412]/5 rounded-xl p-5 border border-[#78350F]/20">
+                        <div class="flex items-center gap-3 mb-4">
+                            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-[#78350F] to-[#9A3412] flex items-center justify-center shadow-lg">
+                                <i data-lucide="graduation-cap" class="w-5 h-5 text-white"></i>
+                            </div>
+                            <div>
+                                <span class="font-serif-custom text-base font-medium text-[#78350F]">Öğretmen Açıklaması</span>
+                                <span class="text-xs text-neutral-400 ml-2 font-mono-custom">GPT-5.2</span>
+                            </div>
+                        </div>
+                        <div class="prose prose-sm max-w-none font-sans leading-7 text-[#1C1917]/90">
+                            ${marked.parse(output.teacher_explanation)}
+                        </div>
+                    </div>
+                `;
+            }
+
+            const htmlContent = `
+                <div class="card-surface p-8 rounded-2xl rounded-tl-sm relative overflow-hidden group">
+                     <div class="absolute top-0 left-0 w-full h-[3px] bg-gradient-to-r from-[#78350F]/40 via-[#9A3412]/30 to-transparent"></div>
+                     
+                     <div class="flex items-center justify-between mb-6 pb-4 border-b border-[#E7E5E4]">
+                        <span class="font-serif-custom text-lg italic text-[#78350F]">Analiz Sonucu</span>
+                         <div class="flex items-center gap-3">
+                            <span class="font-mono-custom text-[9px] text-neutral-400 bg-[#F5F5F4] px-2 py-1 rounded border border-[#E7E5E4]/50">GÜVEN: ${(confidenceValue * 100).toFixed(0)}%</span>
+                            <span class="font-mono-custom text-[9px] text-neutral-400 bg-[#F5F5F4] px-2 py-1 rounded border border-[#E7E5E4]/50">SÜRE: ${((output.processing_time_ms || 0) / 1000).toFixed(1)}s</span>
+                        </div>
+                    </div>
+
+                    <!-- Teacher Explanation (GPT-5.2) -->
+                    ${teacherHtml}
+                    
+                    <!-- Prerequisite Gaps (Warnings) -->
+                    ${gapsHtml}
+                    
+                    <!-- Final Answer (Highlighted) -->
+                    ${finalAnswerHtml}
+
+                    <!-- Solution Steps (The Core Content) -->
+                    ${solutionHtml}
+
+                    <!-- Kazanımlar Section (Now pushed down) -->
+                    ${kazanimlarHtml}
+
+                    <!-- Textbook References Section -->
+                    ${textbookHtml}
+
+                    <!-- Summary Section -->
+                    <div class="bg-[#FDFCF8] rounded-lg p-4 border border-[#E7E5E4]">
+                        <h3 class="font-serif-custom text-base italic text-[#78350F] mb-2 flex items-center gap-2">
+                            <i data-lucide="message-square" class="w-4 h-4"></i>
+                            Özet
+                        </h3>
+                        <div class="prose prose-sm font-sans font-light leading-7 text-[#1C1917]/90 max-w-none">
+                            ${marked.parse(summaryText)} 
+                        </div>
+                    </div>
+
+                    <!-- Actions Footer -->
+                    <div class="flex flex-wrap items-center gap-3 mt-6 pt-4 border-t border-[#E7E5E4]/60 opacity-60 group-hover:opacity-100 transition-opacity duration-300">
+                        <span class="font-mono-custom text-[10px] text-neutral-400">${output.matched_kazanimlar?.length || 0} kazanım eşleşti</span>
+                        <div class="flex-grow"></div>
+                        <div class="flex items-center gap-1">
+                             <button class="p-1.5 hover:bg-[#F5F5F4] rounded text-neutral-400 hover:text-[#1C1917] transition-colors">
+                                <i data-lucide="thumbs-up" class="w-3.5 h-3.5"></i>
+                            </button>
+                            <button class="p-1.5 hover:bg-[#F5F5F4] rounded text-neutral-400 hover:text-[#1C1917] transition-colors">
+                                <i data-lucide="thumbs-down" class="w-3.5 h-3.5"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Replace the skeleton container
+            container.querySelector('.flex.flex-col').innerHTML = htmlContent;
+
+            lucide.createIcons();
+            scrollToBottom();
+        }
+
+        function scrollToBottom() {
+            elements.chatStream.scrollTop = elements.chatStream.scrollHeight;
+        }
+
+    </script>
+</body>
+
+</html>

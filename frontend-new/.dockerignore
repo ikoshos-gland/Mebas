@@ -1,0 +1,29 @@
+# Dependencies
+node_modules
+
+# Environment files (use ARG/ENV in Dockerfile instead)
+.env
+.env.local
+.env.*.local
+
+# Build output
+dist
+build
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore

@@ -1,0 +1,1002 @@
+"""
+MEB RAG Sistemi - LangGraph Node Implementations
+All graph nodes that return partial state updates
+"""
+from typing import Dict, Any
+import base64
+
+from src.agents.state import QuestionAnalysisState, get_effective_grade, get_effective_subject
+from src.agents.decorators import with_timeout, log_node_execution
+from config.settings import get_settings
+
+# Get settings for RAG configuration
+settings = get_settings()
+
+
+def classify_message_type(text: str) -> str:
+    """
+    Classify message type using pattern matching.
+
+    Returns:
+        "academic_question" - Academic/educational question
+        "greeting" - Simple greeting/hello
+        "general_chat" - General conversation
+        "unclear" - Cannot determine
+    """
+    if not text:
+        return "unclear"
+
+    text_lower = text.lower().strip()
+
+    # Greeting patterns (Turkish + English)
+    greeting_patterns = [
+        "selam", "merhaba", "hey", "hi", "hello", "günaydın",
+        "iyi günler", "iyi akşamlar", "nasılsın", "naber",
+        "selamlar", "slm", "mrb", "sa", "as", "selamün aleyküm"
+    ]
+
+    # Check if message is ONLY a greeting (short message)
+    if len(text_lower.split()) <= 3:
+        for pattern in greeting_patterns:
+            if pattern in text_lower:
+                return "greeting"
+
+    # General chat patterns (non-academic)
+    chat_patterns = [
+        "teşekkür", "sağol", "eyvallah", "tamam", "ok", "anladım",
+        "görüşürüz", "bye", "hoşça kal", "iyi geceler", "kendine iyi bak"
+    ]
+
+    if len(text_lower.split()) <= 5:
+        for pattern in chat_patterns:
+            if pattern in text_lower:
+                return "general_chat"
+
+    # Academic question indicators
+    academic_indicators = [
+        "?",  # Question mark
+        "nasıl", "nedir", "ne demek", "açıkla", "anlat",
+        "hesapla", "bul", "çöz", "formül", "denklem",
+        "kaç", "kaçtır", "neden", "niçin", "hangi",
+        "örnek", "soru", "problem", "ödev", "ders",
+        "matematik", "fizik", "kimya", "biyoloji", "tarih",
+        "türkçe", "edebiyat", "geometri", "cebir"
+    ]
+
+    for indicator in academic_indicators:
+        if indicator in text_lower:
+            return "academic_question"
+
+    # If message is long enough, assume it's academic
+    if len(text_lower.split()) >= 5:
+        return "academic_question"
+
+    return "unclear"
+
+
+@log_node_execution("analyze_input")
+@with_timeout(settings.timeout_analyze_input)
+async def analyze_input(state: QuestionAnalysisState) -> Dict[str, Any]:
+    """
+    Node: Analyze input (text or image).
+
+    1. Classifies message type (greeting, academic, general_chat)
+    2. If image is present, uses Vision API
+    3. Otherwise processes text
+
+    RETURNS: Partial state update, NOT full state!
+    """
+    from src.vision import QuestionAnalysisPipeline, QuestionAnalysisInput
+
+    result_update: Dict[str, Any] = {}
+
+    # First, classify message type for text-only messages
+    question_text = state.get("question_text", "")
+    has_image = bool(state.get("question_image_base64"))
+
+    # If we have an image, it's definitely an academic question
+    if has_image:
+        message_type = "academic_question"
+    else:
+        message_type = classify_message_type(question_text)
+
+    result_update["message_type"] = message_type
+
+    # If not an academic question, skip heavy processing
+    if message_type in ("greeting", "general_chat"):
+        result_update.update({
+            "question_text": question_text,
+            "detected_topics": [],
+            "status": "chat_mode"
+        })
+        return result_update
+
+    # Check if we have an image
+    if state.get("question_image_base64"):
+        # Decode and analyze with Vision
+        # Handle data URL format: strip "data:image/...;base64," prefix if present
+        image_data = state["question_image_base64"]
+        if image_data.startswith("data:"):
+            # Extract base64 part after the comma
+            image_data = image_data.split(",", 1)[1]
+        image_bytes = base64.b64decode(image_data)
+        
+        pipeline = QuestionAnalysisPipeline()
+        analysis = await pipeline.analyze_from_bytes(
+            image_bytes=image_bytes,
+            user_grade=state.get("user_grade"),
+            subject_hint=state.get("user_subject")
+        )
+        
+        # DEBUG: Log extracted text and topics from image
+        print(f"DEBUG [analyze_input] Extracted text from image: {analysis.extracted_text[:300]}...")
+        print(f"DEBUG [analyze_input] Detected topics: {analysis.topics}")
+
+        result_update.update({
+            "question_text": analysis.extracted_text,
+            "vision_result": {
+                "question_type": analysis.question_type,
+                "topics": analysis.topics,
+                "math_expressions": analysis.math_expressions,
+                "confidence": analysis.confidence
+            },
+            "ai_estimated_grade": analysis.grade if analysis.grade_source == "ai" else None,
+            "detected_topics": analysis.topics,
+            "math_expressions": analysis.math_expressions,
+            "question_type": analysis.question_type,
+            "is_exam_mode": state.get("is_exam_mode", False),
+            "status": "processing"
+        })
+    else:
+        # Text-only input
+        result_update.update({
+            "question_text": state.get("question_text", ""),
+            "detected_topics": [],
+            "is_exam_mode": state.get("is_exam_mode", False),
+            "status": "processing"
+        })
+    
+    return result_update
+
+
+# ===== QUERY UNDERSTANDING PROMPT =====
+QUERY_UNDERSTANDING_PROMPT = """Sen MEB müfredatı uzmanısın. Aşağıdaki öğrenci sorusunu analiz et.
+
+## SORU
+{question_text}
+
+## GÖREV
+Bu sorunun MEB müfredatındaki yerini belirle:
+
+1. **ANA KONU**: Bu soru hangi müfredat konusuyla ilgili?
+   - MEB terminolojisi kullan (örn: "Dolaşım Sistemi", "Newton'un Hareket Yasaları")
+
+2. **ANAHTAR KAVRAMLAR**: Soruda geçen veya sorulması gereken EN ÖNEMLİ kavramlar
+   - Ders kitabında aranacak terimler (örn: kalp, kapakçık, biküspit)
+   - SADECE EN KRİTİK 3-5 KAVRAM (fazla değil!)
+
+3. **DERS**: Bu konu hangi derse ait?
+   - BİY (Biyoloji), FİZ (Fizik), KİM (Kimya), MAT (Matematik)
+
+4. **SINIF**: Bu konu tipik olarak hangi sınıfta öğretiliyor?
+   - 9, 10, 11 veya 12
+
+5. **SORU TİPİ**:
+   - multiple_choice: Çoktan seçmeli
+   - find_wrong: Yanlışı bul
+   - open_ended: Açık uçlu
+   - calculation: Hesaplama
+   - true_false: Doğru/Yanlış
+   - matching: Eşleştirme
+
+6. **ZENGİNLEŞTİRİLMİŞ SORGU**: Ana konu + kritik kavramları birleştir (KISA TUT!)
+   - Bu sorgu Azure Search'te aranacak
+   - Örnek: "dolaşım sistemi kalp kapakçık biküspit" (4-6 kelime yeterli!)
+
+## ÖNEMLİ
+- Kavramları TÜRKÇE yaz
+- MEB ders kitabı terminolojisini kullan
+- Emin değilsen confidence düşük tut"""
+
+
+@log_node_execution("understand_query")
+@with_timeout(settings.timeout_query_understanding)
+async def understand_query(state: QuestionAnalysisState) -> Dict[str, Any]:
+    """
+    SOTA Pre-Retrieval Query Understanding Node.
+
+    Bridges semantic gap between user question and curriculum terminology.
+    Uses LLM to extract key concepts and enrich query for better retrieval.
+
+    This is a 2025 SOTA approach that significantly improves retrieval accuracy
+    by expanding the query with curriculum-specific terminology.
+
+    Returns:
+        enriched_query: LLM-enriched search query
+        query_understanding: Full analysis result
+        detected_topics: Updated topics from LLM
+        inferred_subject: Detected subject code
+        ai_estimated_grade: Updated grade if not already set
+    """
+    from langchain_openai import AzureChatOpenAI
+    from src.rag.output_models import QueryUnderstanding
+
+    question_text = state.get("question_text", "")
+
+    # Skip if no question or too short
+    if not question_text or len(question_text) < 10:
+        print("DEBUG [understand_query] Skipping - question too short")
+        return {
+            "enriched_query": question_text,
+            "query_understanding": None
+        }
+
+    settings = get_settings()
+
+    try:
+        # Create LLM with structured output
+        llm = AzureChatOpenAI(
+            azure_endpoint=settings.azure_openai_endpoint,
+            api_key=settings.azure_openai_api_key,
+            api_version=settings.azure_openai_api_version,
+            azure_deployment=settings.azure_openai_chat_deployment,
+            temperature=settings.llm_temperature_deterministic
+        )
+
+        structured_llm = llm.with_structured_output(QueryUnderstanding)
+
+        # Invoke LLM
+        result = await structured_llm.ainvoke([
+            {"role": "system", "content": "Sen MEB müfredatı uzmanısın. Soruları analiz edip müfredat terminolojisi ile zenginleştiriyorsun."},
+            {"role": "user", "content": QUERY_UNDERSTANDING_PROMPT.format(
+                question_text=question_text
+            )}
+        ])
+
+        # Debug logging
+        print(f"DEBUG [understand_query] Primary topic: {result.primary_topic}")
+        print(f"DEBUG [understand_query] Key concepts: {result.key_concepts}")
+        print(f"DEBUG [understand_query] Inferred subject: {result.inferred_subject}")
+        print(f"DEBUG [understand_query] Inferred grade: {result.inferred_grade}")
+        print(f"DEBUG [understand_query] Enriched query: {result.enriched_query[:100]}...")
+
+        # Build updated topics list
+        updated_topics = [result.primary_topic] + result.key_concepts[:5]
+
+        # Update state with enriched data
+        return {
+            "enriched_query": result.enriched_query,
+            "query_understanding": result.model_dump(),
+            # Override detected topics with LLM-extracted ones
+            "detected_topics": updated_topics,
+            # Set inferred subject
+            "inferred_subject": result.inferred_subject,
+            # Set AI grade if not already set by vision
+            "ai_estimated_grade": result.inferred_grade if not state.get("ai_estimated_grade") else state.get("ai_estimated_grade"),
+            # Update question type if detected
+            "question_type": result.question_type.value if result.question_type else state.get("question_type")
+        }
+
+    except Exception as e:
+        print(f"ERROR [understand_query]: {e}")
+        # Fallback: return original question as enriched query
+        return {
+            "enriched_query": question_text,
+            "query_understanding": None
+        }
+
+
+@log_node_execution("retrieve_kazanimlar")
+@with_timeout(settings.timeout_retrieve)
+async def retrieve_kazanimlar(state: QuestionAnalysisState) -> Dict[str, Any]:
+    """
+    Node: Retrieve matching kazanımlar using hybrid search.
+
+    FIXED: Now searches DIRECTLY in kazanımlar index (PRIMARY source)
+    instead of searching synthetic questions.
+
+    CRITICAL: Uses effective grade (user_grade > ai_estimated_grade)
+
+    On retry, relaxes filters.
+    """
+    from config.settings import get_settings
+    from config.azure_config import get_search_client
+    from src.vector_store import ParentDocumentRetriever
+
+    settings = get_settings()
+
+    # CRITICAL: NO grade filter for kazanım search!
+    # We want the BEST matching kazanım regardless of student's grade.
+    # Grade filtering is only for TEXTBOOK content (pedagogical appropriateness).
+    # Example: A heart valve question should find BİY.11.2.6 even if student is grade 9.
+    grade = None  # Always search all grades
+
+    # Subject filter can help narrow down (BİY vs FİZ etc.)
+    subject = get_effective_subject(state)
+
+    # Get retry count for filter relaxation
+    retry_count = state.get("retrieval_retry_count", 0)
+
+    # Relax subject filter on retry if no results
+    if retry_count >= 1:
+        subject = None  # Remove subject filter too
+
+    try:
+        # PRIMARY: Search kazanımlar index directly (MEB learning objectives)
+        kazanim_client = get_search_client(settings.azure_search_index_kazanim)
+        # SECONDARY: Questions index for hybrid expansion
+        questions_client = get_search_client(settings.azure_search_index_questions)
+
+        retriever = ParentDocumentRetriever(
+            search_client=questions_client,
+            kazanim_client=kazanim_client
+        )
+
+        # SOTA: Use enriched_query from Query Understanding node if available
+        # Falls back to original question_text if understand_query didn't run
+        search_query = state.get("enriched_query") or state.get("question_text", "")
+        print(f"DEBUG: Searching with query: {search_query[:500]}...")
+
+        # HYBRID QUERY EXPANSION: Search both indexes in parallel
+        # - Kazanımlar index: direct semantic match (PRIMARY)
+        # - Sentetik sorular: similar questions (SECONDARY, can discover missed kazanımlar)
+        results = await retriever.search_hybrid_expansion(
+            student_question=search_query,
+            grade=grade,
+            subject=subject,
+            is_exam_mode=state.get("is_exam_mode", False),
+            top_k=settings.rag_kazanim_top_k,
+            kazanim_weight=settings.rag_hybrid_kazanim_weight,
+            question_weight=settings.rag_hybrid_question_weight,
+            synergy_bonus=settings.rag_hybrid_synergy_bonus
+        )
+        
+        if not results:
+            # CRITICAL: Increment retry count when returning needs_retry
+            return {
+                "matched_kazanimlar": [],
+                "status": "needs_retry",
+                "retrieval_retry_count": retry_count + 1
+            }
+        
+        
+        # Deduplicate results by kazanim_code
+        seen_codes = set()
+        unique_results = []
+        
+        print(f"DEBUG: Raw retrieval count: {len(results)}")
+        
+        for r in results:
+            code = r.get("kazanim_code")
+            desc = r.get("kazanim_description", "").strip()
+            score = r.get("score", 0)
+            
+            # DATA CLEANING: Filter out corrupt descriptions
+            # 1. Too short or garbage
+            if len(desc) < settings.retrieval_min_description_length or desc.lower() in ["a-", "b-", "c-", "d-", "e-", "none"]:
+                print(f"DEBUG: Dropping corrupt result (garbage): {code} | Desc: '{desc[:50]}...'")
+                continue
+
+            # 2. Too long (Omnibus Error - likely contains multiple merged kazanımlar)
+            if len(desc) > settings.retrieval_max_description_length:
+                print(f"DEBUG: Dropping corrupt result (too long): {code} | Len: {len(desc)}")
+                continue
+
+            # 3. Contains other kazanım headers (Omnibus Error)
+            # Check for pattern like "### BİY" or just distinct kazanim codes in text
+            if "### BİY" in desc or "### MAT" in desc or "### FİZ" in desc or "### KİM" in desc:
+                 print(f"DEBUG: Dropping corrupt result (embedded headers): {code}")
+                 continue
+                 
+            if code and code not in seen_codes:
+                seen_codes.add(code)
+                unique_results.append(r)
+                print(f"DEBUG: Kept result: {code} | Score: {score}")
+                
+        # If filtering removed all results, retry
+        if not unique_results and results:
+             print(f"DEBUG: All results were filtered out. Triggering retry.")
+             return {
+                 "matched_kazanimlar": [],
+                 "status": "needs_retry",
+                 "retrieval_retry_count": retry_count + 1
+             }
+        
+        # QUALITY CHECK: Check for weak results
+        # If we have results but they are weak AND we haven't retried yet, force a retry
+        # This allows switching from "strict mode" to "relaxed mode" if strict mode yields poor results
+        first_score = unique_results[0]["score"] if unique_results else 0
+        weak_signal = len(unique_results) < 2 or first_score < settings.retrieval_weak_signal_threshold
+        
+        if weak_signal and retry_count == 0:
+             return {
+                 "matched_kazanimlar": [],
+                 "status": "needs_retry",
+                 "retrieval_retry_count": retry_count + 1
+             }
+        
+        # SIBLING RETRIEVAL: Search for "Alternative/Related" kazanımlar
+        # Use the best match's code to find neighbors (12.1.1 -> 12.1.2)
+        if unique_results:
+            best_match = unique_results[0]
+            best_code = best_match.get("kazanim_code")
+            
+            if best_code:
+                try:
+                    siblings = await retriever.search_siblings_async(
+                        target_code=best_code,
+                        grade=grade,
+                        subject=subject
+                    )
+                    
+                    if siblings:
+                        # Append siblings to results
+                        # Ensure we don't duplicate existing ones
+                        existing_codes = {r.get("kazanim_code") for r in unique_results}
+                        for sibling in siblings:
+                            if sibling.get("kazanim_code") not in existing_codes:
+                                unique_results.append(sibling)
+                                
+                except Exception as e:
+                    print(f"Sibling search error: {e}")
+                    # Don't fail the whole request, just skip siblings
+
+        return {
+            "matched_kazanimlar": unique_results,
+            "status": "processing"
+        }
+        
+    except Exception as e:
+        # CRITICAL: Increment retry count on error too
+        return {
+            "error": f"Kazanım arama hatası: {str(e)}",
+            "status": "needs_retry",
+            "retrieval_retry_count": retry_count + 1
+        }
+
+
+@log_node_execution("retrieve_textbook")
+@with_timeout(settings.timeout_retrieve)
+async def retrieve_textbook(state: QuestionAnalysisState) -> Dict[str, Any]:
+    """
+    Node: Retrieve related textbook chunks and IMAGES for matched kazanımlar.
+
+    CRITICAL: Uses grade/subject filtering for pedagogical correctness.
+    """
+    from config.settings import get_settings
+    from config.azure_config import get_search_client
+    from src.vector_store import ParentDocumentRetriever, ImageRetriever
+    from src.agents.state import get_effective_grade
+
+    matched = state.get("matched_kazanimlar", [])
+    question_text = state.get("question_text", "")
+
+    if not matched:
+        return {
+            "related_chunks": [],
+            "related_images": []
+        }
+
+    try:
+        settings = get_settings()
+
+        # Get grade/subject for filtering - CRITICAL for pedagogical correctness
+        user_grade = get_effective_grade(state)
+        subject = state.get("subject")
+        is_exam_mode = state.get("is_exam_mode", False)
+
+        # CRITICAL FIX: Extract grades from matched kazanımlar
+        # The question might be about a topic from a different grade than the user's grade
+        # e.g., 12th grader asking about 11th grade heart topic
+        kazanim_grades = set(k.get("grade") for k in matched if k.get("grade"))
+
+        # Determine the effective grade for textbook search
+        # Priority: kazanım grades > user grade
+        # If kazanımlar have specific grades, use those for content retrieval
+        if kazanim_grades:
+            # Use minimum kazanım grade to ensure we get relevant content
+            # e.g., if kazanımlar are from grade 11 and 12, search from 11 upward
+            content_grade = min(kazanim_grades)
+            # If user is at or above this grade, expand search to include kazanım grades
+            if user_grade and user_grade >= content_grade:
+                grade = user_grade
+                # Enable exam mode behavior to get cumulative content
+                # This ensures we get content from kazanım grades
+                is_exam_mode_for_textbook = True
+            else:
+                grade = content_grade
+                is_exam_mode_for_textbook = is_exam_mode
+        else:
+            grade = user_grade
+            is_exam_mode_for_textbook = is_exam_mode
+
+        # 1. Retrieve Textbook Chunks
+        # Create retriever with both clients for consistency
+        kazanim_client = get_search_client(settings.azure_search_index_kazanim)
+        questions_client = get_search_client(settings.azure_search_index_questions)
+        retriever = ParentDocumentRetriever(
+            search_client=questions_client,
+            kazanim_client=kazanim_client
+        )
+
+        kazanim_codes = [k.get("kazanim_code") for k in matched]
+
+        related_chunks = await retriever.search_textbook_by_kazanimlar(
+            kazanim_codes=kazanim_codes,
+            question_text=question_text,
+            grade=grade,
+            subject=subject,
+            is_exam_mode=is_exam_mode_for_textbook,  # Use adjusted exam mode
+            top_k=settings.rag_textbook_top_k
+        )
+        
+        # 2. Retrieve Related Images
+        # We search for images using the question text which describes the topic
+        image_client = get_search_client(settings.azure_search_index_images)
+        image_retriever = ImageRetriever(image_client)
+
+        # Also try to use topics if available
+        search_query = question_text
+        if state.get("detected_topics"):
+            search_query += " " + " ".join(state.get("detected_topics"))
+
+        # CRITICAL: Apply same grade/subject filters to images
+        # Use adjusted exam mode to include images from kazanım grades
+        related_images = await image_retriever.search_by_description_async(
+            description=search_query,
+            grade=grade,
+            subject=subject,
+            is_exam_mode=is_exam_mode_for_textbook,
+            top_k=3
+        )
+        
+        return {
+            "related_chunks": related_chunks,
+            "related_images": related_images
+        }
+        
+    except Exception as e:
+        print(f"Textbook retrieval error: {e}")
+        return {
+            "related_chunks": [],
+            "related_images": []
+        }
+
+
+@log_node_execution("rerank_results")
+@with_timeout(settings.timeout_rerank)
+async def rerank_results(state: QuestionAnalysisState) -> Dict[str, Any]:
+    """
+    Node: Rerank retrieved results using LLM for better relevance.
+    
+    Uses the LLMReranker to score each kazanım's relevance
+    to the question and reorders by blended score.
+    """
+    matched = state.get("matched_kazanimlar", [])
+    question_text = state.get("question_text", "")
+    
+    if len(matched) <= 1:
+        return {}  # No reranking needed
+    
+    if not question_text:
+        # Can't rerank without question text
+        return {"matched_kazanimlar": matched[:5]}
+    
+    try:
+        from src.rag.reranker import LLMReranker
+        
+        reranker = LLMReranker()
+        reranked = await reranker.rerank(
+            question=question_text,
+            kazanimlar=matched,
+            top_k=settings.rag_kazanim_top_k,
+            score_blend_ratio=settings.reranker_score_blend_ratio
+        )
+
+        # If reranker filtered out everything (all results were irrelevant)
+        if not reranked:
+            print("[rerank_results] All results filtered by reranker - no relevant matches")
+            return {"matched_kazanimlar": []}
+
+        # Filter by confidence threshold
+        filtered = [
+            k for k in reranked
+            if k.get("blended_score", 0) >= settings.rag_confidence_threshold
+        ]
+
+        # Only add back minimum if we have SOME good results
+        # Don't force bad results into the response
+        if not filtered and reranked:
+            # All below threshold - take best one only if it's reasonably close
+            best = reranked[0]
+            if best.get("blended_score", 0) >= settings.rag_confidence_threshold * 0.8:
+                filtered = [best]
+                print(f"[rerank_results] Using best match with borderline score: {best.get('blended_score', 0):.2f}")
+            else:
+                print(f"[rerank_results] Best match score too low: {best.get('blended_score', 0):.2f}")
+
+        return {"matched_kazanimlar": filtered}
+
+    except Exception as e:
+        print(f"[rerank_results] Reranking error: {e}, using original order")
+        # Fallback to original order
+        return {"matched_kazanimlar": matched[:5]}
+
+
+@log_node_execution("track_progress")
+@with_timeout(10.0)
+async def track_progress(state: QuestionAnalysisState) -> Dict[str, Any]:
+    """
+    Node: Auto-track high-confidence kazanımlar to user progress.
+
+    Runs AFTER rerank_results when we have final confidence scores.
+    Only tracks kazanımlar with blended_score >= CONFIDENCE_THRESHOLD (0.80).
+
+    REQUIRES: user_id in state (from authenticated request)
+    """
+    CONFIDENCE_THRESHOLD = 0.80
+
+    matched = state.get("matched_kazanimlar", [])
+    user_id = state.get("user_id")
+    conversation_id = state.get("conversation_id")
+
+    # Can't track without user
+    if not user_id:
+        return {"tracked_kazanim_codes": []}
+
+    # No kazanımlar to track
+    if not matched:
+        return {"tracked_kazanim_codes": []}
+
+    tracked_codes = []
+
+    try:
+        from src.database.db import get_session
+        from src.database.models import UserKazanimProgress
+        from datetime import datetime
+
+        db = get_session()
+
+        for kazanim in matched:
+            # Get the best available score
+            score = kazanim.get("blended_score", kazanim.get("score", 0))
+            code = kazanim.get("kazanim_code")
+
+            if not code:
+                continue
+
+            # Only track high-confidence kazanımlar
+            if score < CONFIDENCE_THRESHOLD:
+                continue
+
+            # Check if already tracked (idempotent)
+            existing = db.query(UserKazanimProgress).filter(
+                UserKazanimProgress.user_id == user_id,
+                UserKazanimProgress.kazanim_code == code
+            ).first()
+
+            if existing:
+                # Already tracked, skip
+                continue
+
+            # Create new progress entry
+            progress = UserKazanimProgress(
+                user_id=user_id,
+                kazanim_code=code,
+                status="tracked",
+                initial_confidence_score=score,
+                source_conversation_id=conversation_id,
+                tracked_at=datetime.utcnow()
+            )
+            db.add(progress)
+            tracked_codes.append(code)
+
+        if tracked_codes:
+            db.commit()
+            print(f"[track_progress] Tracked {len(tracked_codes)} kazanımlar for user {user_id}: {tracked_codes}")
+
+        db.close()
+
+    except Exception as e:
+        print(f"[track_progress] Error tracking progress: {e}")
+
+    return {"tracked_kazanim_codes": tracked_codes}
+
+
+@log_node_execution("synthesize_interdisciplinary")
+@with_timeout(settings.timeout_synthesize)
+async def synthesize_interdisciplinary(state: QuestionAnalysisState) -> Dict[str, Any]:
+    """
+    Node: Synthesize related kazanımlar and suggest learning path.
+
+    Analyzes matched kazanımlar to find:
+    - Prerequisite relationships
+    - Parallel/related concepts
+    - Suggested learning order with reasoning
+    """
+    from langchain_openai import AzureChatOpenAI
+    from src.rag.output_models import InterdisciplinarySynthesis
+
+    matched = state.get("matched_kazanimlar", [])
+
+    if len(matched) < 2:
+        # Need at least 2 kazanımlar for synthesis
+        return {"interdisciplinary_synthesis": None}
+
+    settings = get_settings()
+
+    try:
+        # Use the main chat model for synthesis
+        llm = AzureChatOpenAI(
+            azure_endpoint=settings.azure_openai_endpoint,
+            api_key=settings.azure_openai_api_key,
+            api_version=settings.azure_openai_api_version,
+            azure_deployment=settings.azure_openai_chat_deployment,
+            temperature=settings.llm_temperature_creative
+        )
+
+        structured_llm = llm.with_structured_output(InterdisciplinarySynthesis)
+
+        SYNTHESIS_PROMPT = """Sen bir MEB eğitim uzmanısın. Aşağıdaki kazanımları analiz et ve aralarındaki ilişkileri bul.
+
+## Kazanımlar
+{kazanimlar}
+
+## Görev
+1. Kazanımlar arasındaki ilişkileri tespit et (ön koşul, paralel, genişleme, uygulama)
+2. Öğrenci için en verimli öğrenme sırasını belirle
+3. Her kazanım için öğrenme sırasını ve nedenini açıkla
+4. Ortak kilit kavramları listele
+5. Pratik çalışma önerileri ver
+
+İLİŞKİ TÜRLERİ:
+- prerequisite: Biri diğerinin ön koşulu (önce öğrenilmeli)
+- parallel: Aynı anda öğrenilebilir, birbirini destekler
+- extension: Biri diğerinin genişlemesi/derinleşmesi
+- application: Biri diğerinin pratik uygulaması
+
+ÖNEMLİ: Öğrenme sırası mantıklı ve pedagojik açıdan doğru olmalı."""
+
+        # Format kazanımlar (limit to top 7 for token efficiency)
+        kazanim_text = ""
+        for i, k in enumerate(matched[:7], 1):
+            code = k.get("kazanim_code", "")
+            desc = k.get("kazanim_description", "")
+            title = k.get("kazanim_title", "")
+            grade = k.get("grade", "?")
+            kazanim_text += f"{i}. [{code}] (Sınıf {grade}) {title or desc[:100]}\n"
+            if title and desc:
+                kazanim_text += f"   Açıklama: {desc[:200]}...\n"
+
+        result = await structured_llm.ainvoke([
+            {"role": "system", "content": "Sen bir MEB müfredat ve pedagoji uzmanısın. Kazanımlar arası ilişkileri analiz et ve öğrenme yolu öner."},
+            {"role": "user", "content": SYNTHESIS_PROMPT.format(kazanimlar=kazanim_text)}
+        ])
+
+        return {"interdisciplinary_synthesis": result.model_dump()}
+
+    except Exception as e:
+        print(f"[synthesize_interdisciplinary] Error: {e}")
+        return {"interdisciplinary_synthesis": None}
+
+
+@log_node_execution("generate_response")
+@with_timeout(settings.timeout_generate_response)
+async def generate_response(state: QuestionAnalysisState) -> Dict[str, Any]:
+    """
+    Node: Generate final response using RAG.
+    """
+    from src.rag.response_generator import ResponseGenerator
+    
+    matched = state.get("matched_kazanimlar", [])
+    
+    if not matched:
+        return {
+            "response": {
+                "message": "Maalesef bu soru için uygun bir kazanım bulunamadı.",
+                "kazanimlar": [],
+                "suggestions": []
+            },
+            "status": "success"
+        }
+    
+    try:
+        generator = ResponseGenerator()
+        
+        # Get grade context for pedagogically appropriate responses
+        from src.agents.state import get_effective_grade
+        grade = get_effective_grade(state)
+        is_exam_mode = state.get("is_exam_mode", False)
+
+        analysis_result = await generator.generate(
+            question_text=state.get("question_text", ""),
+            matched_kazanimlar=matched,
+            related_chunks=state.get("related_chunks", []),
+            related_images=state.get("related_images", []),
+            detected_topics=state.get("detected_topics", []),
+            grade=grade,
+            is_exam_mode=is_exam_mode
+        )
+        
+        return {
+            "response": analysis_result.model_dump(),
+            "status": "success"
+        }
+        
+    except Exception as e:
+        print(f"Response generation error: {e}")
+        # Fallback
+        return {
+            "response": {
+                "message": f"{len(matched)} kazanım bulundu fakat analiz üretilemedi.",
+                "kazanimlar": matched,
+                "error": str(e)
+            },
+            "status": "partial_success"
+        }
+
+
+@log_node_execution("find_prerequisite_gaps")
+@with_timeout(settings.timeout_gap_finder)
+async def find_prerequisite_gaps(state: QuestionAnalysisState) -> Dict[str, Any]:
+    """
+    Node: Find prerequisite knowledge gaps for matched kazanımlar.
+
+    Uses database relationships to identify missing prerequisites.
+    Falls back to heuristic-based gap finder if database is unavailable.
+    """
+    matched = state.get("matched_kazanimlar", [])
+
+    if not matched:
+        return {"prerequisite_gaps": []}
+
+    grade = get_effective_grade(state)
+
+    try:
+        # Try database-backed finder first
+        from src.rag.gap_finder import GapFinder
+        from src.database.db import get_session
+
+        db = get_session()
+        finder = GapFinder(db)
+
+        # Find gaps based on matched kazanımlar
+        gaps = finder.find_gaps_from_analysis(matched, grade)
+        db.close()
+
+        return {"prerequisite_gaps": gaps}
+
+    except Exception as e:
+        print(f"[find_prerequisite_gaps] Database finder failed: {e}, using heuristic fallback")
+
+        try:
+            # Fallback to heuristic-based finder
+            from src.rag.gap_finder import SimpleGapFinder
+
+            finder = SimpleGapFinder()
+            kazanim_codes = [k.get("kazanim_code") for k in matched if k.get("kazanim_code")]
+            gaps = finder.find_gaps(kazanim_codes, grade)
+
+            return {"prerequisite_gaps": gaps}
+
+        except Exception as fallback_error:
+            print(f"[find_prerequisite_gaps] Heuristic finder also failed: {fallback_error}")
+            return {"prerequisite_gaps": []}
+
+
+@log_node_execution("handle_chat")
+@with_timeout(15.0)
+async def handle_chat(state: QuestionAnalysisState) -> Dict[str, Any]:
+    """
+    Node: Handle non-academic messages (greetings, general chat).
+
+    Uses a simple LLM call to generate a friendly response without
+    the full RAG pipeline overhead.
+    """
+    from langchain_openai import AzureChatOpenAI
+    from config.settings import get_settings
+
+    settings = get_settings()
+    question_text = state.get("question_text", "")
+    message_type = state.get("message_type", "greeting")
+
+    # Simple responses for common patterns (no LLM needed)
+    simple_responses = {
+        "selam": "Merhaba! 👋 Size nasıl yardımcı olabilirim? Ders ile ilgili bir sorunuz varsa bana sorabilirsiniz.",
+        "merhaba": "Merhaba! 👋 Bugün hangi konuda yardımcı olabilirim?",
+        "sa": "Aleyküm selam! Nasıl yardımcı olabilirim?",
+        "as": "Aleyküm selam! Nasıl yardımcı olabilirim?",
+        "selamün aleyküm": "Aleyküm selam! Size nasıl yardımcı olabilirim?",
+        "günaydın": "Günaydın! Bugün hangi konuda çalışmak istersiniz?",
+        "iyi günler": "İyi günler! Size nasıl yardımcı olabilirim?",
+        "hey": "Merhaba! Bir sorunuz mu var?",
+        "naber": "İyiyim, teşekkürler! Sana nasıl yardımcı olabilirim?",
+        "nasılsın": "İyiyim, sorduğun için teşekkürler! Senin için ne yapabilirim?",
+    }
+
+    text_lower = question_text.lower().strip()
+
+    # Check for simple pattern match first
+    for pattern, response in simple_responses.items():
+        if pattern in text_lower:
+            return {
+                "response": {
+                    "message": response,
+                    "is_chat_response": True,
+                    "kazanimlar": []
+                },
+                "status": "success"
+            }
+
+    # For general chat or unclear messages, use LLM
+    try:
+        llm = AzureChatOpenAI(
+            azure_deployment=settings.azure_openai_deployment_chat,
+            api_version=settings.azure_openai_api_version,
+            temperature=0.7,
+            max_tokens=150
+        )
+
+        system_prompt = """Sen Yediiklim Okulları'nın yapay zeka asistanısın.
+Öğrencilere yardımcı, samimi ve destekleyici bir şekilde yanıt ver.
+Akademik sorular için öğrencileri soru sormaya teşvik et.
+Yanıtların kısa ve öz olsun."""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": question_text}
+        ]
+
+        response = await llm.ainvoke(messages)
+
+        return {
+            "response": {
+                "message": response.content,
+                "is_chat_response": True,
+                "kazanimlar": []
+            },
+            "status": "success"
+        }
+
+    except Exception as e:
+        # Fallback response if LLM fails
+        return {
+            "response": {
+                "message": "Merhaba! Size nasıl yardımcı olabilirim? Ders konularında sorularınızı bekliyorum.",
+                "is_chat_response": True,
+                "kazanimlar": []
+            },
+            "status": "success"
+        }
+
+
+@log_node_execution("handle_error")
+async def handle_error(state: QuestionAnalysisState) -> Dict[str, Any]:
+    """
+    Node: Handle error state.
+    """
+    error = state.get("error", "Bilinmeyen hata")
+
+    return {
+        "response": {
+            "message": f"İşlem sırasında bir hata oluştu: {error}",
+            "kazanimlar": [],
+            "error": error
+        },
+        "status": "failed"
+    }
+
+
+# Node registry for graph builder
+NODE_REGISTRY = {
+    "analyze_input": analyze_input,
+    "retrieve_kazanimlar": retrieve_kazanimlar,
+    "retrieve_textbook": retrieve_textbook,
+    "rerank_results": rerank_results,
+    "track_progress": track_progress,
+    "find_prerequisite_gaps": find_prerequisite_gaps,
+    "synthesize_interdisciplinary": synthesize_interdisciplinary,
+    "generate_response": generate_response,
+    "handle_chat": handle_chat,
+    "handle_error": handle_error
+}

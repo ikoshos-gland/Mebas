@@ -1,0 +1,121 @@
+# MEB RAG System - Docker Compose
+# Full stack: API + PostgreSQL + Redis (optional)
+
+version: '3.8'
+
+services:
+  # ===== Main API =====
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: meb-rag-api
+    ports:
+      - "8001:8000"  # External 8001, internal still 8000
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://meb:${POSTGRES_PASSWORD}@postgres:5432/mebrag
+      - REDIS_URL=redis://redis:6379
+      - REDIS_ENABLED=true
+      - DEBUG=${DEBUG:-false}
+      - PYTHONUNBUFFERED=1
+      - PYTHONFAULTHANDLER=1
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+      - ./api:/app/api
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./sorular:/app/sorular
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ===== Frontend (React + Vite) =====
+  frontend:
+    build:
+      context: ./frontend-new
+      dockerfile: Dockerfile
+      args:
+        # Firebase configuration (from .env file)
+        VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY}
+        VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN}
+        VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID}
+        VITE_FIREBASE_STORAGE_BUCKET: ${VITE_FIREBASE_STORAGE_BUCKET}
+        VITE_FIREBASE_MESSAGING_SENDER_ID: ${VITE_FIREBASE_MESSAGING_SENDER_ID}
+        VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID}
+    container_name: meb-rag-frontend
+    ports:
+      - "3001:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ===== PostgreSQL Database =====
+  postgres:
+    image: postgres:15-alpine
+    container_name: meb-rag-db
+    environment:
+      POSTGRES_DB: mebrag
+      POSTGRES_USER: meb
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    # Port not exposed externally - API connects via internal network
+    # ports:
+    #   - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meb -d mebrag"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ===== Redis (Distributed Cache) =====
+  redis:
+    image: redis:7-alpine
+    container_name: meb-rag-redis
+    command: >
+      redis-server
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+      --appendfsync everysec
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - default
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  default:
+    name: meb-rag-network
