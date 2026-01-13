@@ -1,231 +1,295 @@
-# Yediiklim Okulları Kişiselleştirilmiş Yapay Zeka Asistanı
+# Meba - MEB Mufredat Uyumlu Yapay Zeka Egitim Asistani
 
-Yediiklim Okulları Kişiselleştirilmiş Yapay Zeka Asistanı, MEB müfredatıyla uyumlu akıllı bir öğretim sistemidir. It uses Retrieval-Augmented Generation (RAG) with LangGraph state machines to provide pedagogically-correct, curriculum-grounded responses to student questions.
+**Yediiklim Okullari Kisisellestirilmis Yapay Zeka Asistani** - Turk Milli Egitim Bakanligi (MEB) mufredatiyla tam uyumlu, RAG (Retrieval-Augmented Generation) ve LangGraph state machine mimarisi kullanan yapay zeka destekli egitim platformu.
 
-## Features
+## Ozellikler
 
-- **Curriculum-Aligned Responses**: All answers are grounded in official MEB textbooks and kazanımlar (learning objectives)
-- **Image Question Analysis**: Upload photos of homework problems for instant analysis using GPT-4o Vision
-- **Grade-Appropriate Filtering**: Responses are filtered by grade level to ensure age-appropriate content
-- **Progress Tracking**: Track mastery of individual kazanımlar over time
-- **Prerequisite Gap Detection**: Identifies missing foundational knowledge and suggests remediation
-- **Exam Mode**: Special mode for YKS (university entrance exam) preparation with cumulative grade access
+- **Akilli Soru Analizi**: Metin ve gorsel tabanli soru analizi (GPT-4o Vision)
+- **Kazanim Eslestirme**: Otomatik MEB kazanim tespiti ve takibi
+- **Pedagojik Yanitlar**: Ders kitabi kaynakli, sinif seviyesine uygun aciklamalar
+- **Onkoşul Analizi**: Eksik bilgi tespiti ve ogrenme yolu onerisi
+- **Sinav Olusturma**: Kisisellestirilmis PDF sinav uretimi
+- **Ilerleme Takibi**: Ogrenci bazli kazanim ilerleme izleme
+- **Coklu Rol Destegi**: Ogrenci, Ogretmen ve Admin panelleri
 
-## Tech Stack
+## Teknoloji Yigini
 
 ### Backend
-- **Python 3.11** with **FastAPI**
-- **LangGraph** for stateful AI workflows
-- **Azure AI Search** for hybrid vector + keyword search
-- **Azure OpenAI** (GPT-4o, GPT-4o-mini, text-embedding-3-large)
-- **Azure Document Intelligence** for PDF processing
-- **SQLAlchemy** with PostgreSQL/SQLite
-- **JWT** authentication with Google OAuth support
+| Teknoloji | Versiyon | Amac |
+|-----------|----------|------|
+| Python | 3.11 | Ana dil |
+| FastAPI | 0.109+ | REST API framework |
+| LangGraph | 0.0.10+ | State machine workflow |
+| SQLAlchemy | 2.0+ | ORM |
+| PostgreSQL | 15 | Veritabani |
+| Redis | 7 | Cache katmani |
 
 ### Frontend
-- **React 19** with **TypeScript**
-- **Vite** for development and building
-- **Tailwind CSS** for styling
-- **React Query** for data fetching
-- **React Router** for navigation
+| Teknoloji | Versiyon | Amac |
+|-----------|----------|------|
+| React | 19 | UI framework |
+| TypeScript | 5.9 | Type safety |
+| Vite | 7.2 | Build tool |
+| Tailwind CSS | 3.4 | Styling |
+| React Query | 5.90 | Data fetching |
 
-## Getting Started
+### Azure Servisleri
+| Servis | Amac |
+|--------|------|
+| Azure OpenAI | GPT-4o, GPT-5.2, text-embedding-3-large |
+| Azure AI Search | Hybrid vector/keyword arama |
+| Azure Document Intelligence | PDF layout analizi |
 
-### Prerequisites
+### DevOps
+- Docker & Docker Compose
+- Multi-stage builds
+- Health checks
+- Firebase Authentication
 
-- Docker and Docker Compose
-- Azure account with:
-  - Azure AI Search
-  - Azure OpenAI
-  - Azure Document Intelligence
+## Hizli Baslangic
 
-### Setup
+### Gereksinimler
+- Docker & Docker Compose
+- Azure hesabi (OpenAI, Search, Document Intelligence)
+- Firebase projesi
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/yourusername/meba.git
-   cd meba
-   ```
+### Kurulum
 
-2. **Configure environment variables**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your Azure credentials
-   ```
-
-3. **Start the services**
-   ```bash
-   docker compose up --build
-   ```
-
-4. **Ingest curriculum content (first time only)**
-   ```bash
-   docker compose run --rm api python scripts/process_pdfs.py
-   ```
-
-5. **Access the application**
-   - Frontend: http://localhost:3001
-   - API Documentation: http://localhost:8001/docs
-
-## Architecture
-
-### System Overview
-
-```
-┌─────────────┐     ┌─────────────────────────────────────────────────────────┐
-│   Frontend  │────▶│                      FastAPI Backend                     │
-│  (React)    │     │                                                          │
-└─────────────┘     │  ┌─────────────────────────────────────────────────────┐ │
-                    │  │                  LangGraph Workflow                  │ │
-                    │  │                                                      │ │
-                    │  │  analyze_input ──▶ retrieve_kazanimlar ──▶ retrieve │ │
-                    │  │       │                    │              _textbook  │ │
-                    │  │       ▼                    ▼                  │      │ │
-                    │  │  [Vision API]       [Azure Search]            ▼      │ │
-                    │  │                                          rerank      │ │
-                    │  │                                              │       │ │
-                    │  │       ┌───────────────────┬──────────────────┘       │ │
-                    │  │       ▼                   ▼                          │ │
-                    │  │  find_gaps ──▶ synthesize ──▶ generate_response     │ │
-                    │  │                                      │               │ │
-                    │  └──────────────────────────────────────┼───────────────┘ │
-                    │                                         ▼                  │
-                    │                               [Structured Response]        │
-                    └────────────────────────────────────────────────────────────┘
-                              │           │              │
-                              ▼           ▼              ▼
-                    ┌──────────────┐ ┌──────────┐ ┌─────────────┐
-                    │ Azure Search │ │ Azure    │ │ PostgreSQL  │
-                    │  (4 indexes) │ │ OpenAI   │ │  Database   │
-                    └──────────────┘ └──────────┘ └─────────────┘
+1. **Repository'yi klonlayin**
+```bash
+git clone https://github.com/your-org/meba.git
+cd meba
 ```
 
-### Azure Search Indexes
+2. **Environment dosyasini olusturun**
+```bash
+cp .env.example .env
+# .env dosyasini duzenleyin
+```
 
-| Index | Content |
-|-------|---------|
-| `meb-kazanimlar-index` | Learning objectives with grade/subject metadata |
-| `meb-kitaplar-index` | Textbook chunks preserving Unit → Topic → Section hierarchy |
-| `meb-images-index` | Extracted images with GPT-4o generated captions |
-| `meb-sentetik-sorular-index` | Generated practice questions |
+3. **Servisleri baslatin**
+```bash
+docker compose up --build
+```
 
-### LangGraph Nodes
+4. **Ilk PDF yukleme (bir kerelik)**
+```bash
+docker compose run --rm api python scripts/process_pdfs.py
+```
 
-1. **analyze_input**: Processes text or uses GPT-4o Vision to extract question from images
-2. **retrieve_kazanimlar**: Hybrid search for matching learning objectives
-3. **retrieve_textbook**: Fetches relevant textbook content with grade filtering
-4. **rerank_results**: LLM-based reranking for quality
-5. **track_progress**: Auto-tracks high-confidence matches to user progress
-6. **find_prerequisite_gaps**: Identifies missing foundational knowledge
-7. **synthesize_interdisciplinary**: Generates learning path suggestions
-8. **generate_response**: Produces structured response with solution steps
+### Erisim Noktalari
+| Servis | URL |
+|--------|-----|
+| Frontend | http://localhost:3001 |
+| API | http://localhost:8001 |
+| Swagger Docs | http://localhost:8001/docs |
 
-## API Endpoints
-
-### Analysis
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/analyze/image` | POST | Analyze question from image |
-| `/analyze/text` | POST | Analyze text question |
-| `/analyze/stream` | POST | Streaming response |
-| `/chat` | POST | Unified chat interface |
-
-### Authentication
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/auth/register` | POST | User registration |
-| `/auth/login` | POST | JWT login |
-| `/auth/google` | POST | Google OAuth |
-
-### Progress
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/users/me/progress` | GET | List tracked kazanımlar |
-| `/users/me/progress/{code}` | PUT | Mark kazanım as understood |
-| `/users/me/progress/stats` | GET | Overall statistics |
-
-### System
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | System health check |
-| `/cache/stats` | GET | Cache statistics |
-
-## Project Structure
+## Proje Yapisi
 
 ```
 Meba/
-├── api/                      # FastAPI backend
-│   ├── auth/                 # Authentication (JWT, Google OAuth)
-│   ├── routes/               # API endpoint handlers
-│   ├── models.py             # Pydantic models
-│   └── main.py               # Application entry point
-├── src/                      # Core business logic
-│   ├── agents/               # LangGraph state machine
-│   ├── cache/                # Caching layer
-│   ├── database/             # SQLAlchemy ORM models
-│   ├── document_processing/  # PDF ingestion pipeline
-│   ├── rag/                  # Response generation components
-│   ├── utils/                # Utilities (tokens, resilience)
-│   ├── vector_store/         # Azure Search integration
-│   └── vision/               # GPT-4o Vision processing
-├── config/                   # Configuration & Azure clients
-├── scripts/                  # Utility scripts
-├── tests/                    # pytest test suite
-├── frontend-new/             # React frontend
-├── data/                     # Data storage
-├── docs/                     # Documentation
-└── docker-compose.yml        # Container orchestration
+├── api/                          # FastAPI backend
+│   ├── auth/                     # Firebase JWT & OAuth
+│   ├── routes/                   # API endpoint'leri
+│   │   ├── analysis.py           # Soru analizi & RAG
+│   │   ├── conversations.py      # Sohbet gecmisi
+│   │   ├── progress.py           # Kazanim takibi
+│   │   ├── exams.py              # Sinav olusturma
+│   │   ├── admin/                # Admin islemleri
+│   │   ├── classrooms/           # Sinif yonetimi
+│   │   └── assignments/          # Odev yonetimi
+│   ├── models.py                 # Pydantic modelleri
+│   └── main.py                   # FastAPI app
+│
+├── src/                          # Core business logic
+│   ├── agents/                   # LangGraph state machine
+│   │   ├── graph.py              # RAG workflow
+│   │   ├── nodes.py              # Islem node'lari
+│   │   ├── state.py              # State tanimlari
+│   │   └── conditions.py         # Edge kosullari
+│   ├── rag/                      # Response generation
+│   │   ├── reranker.py           # LLM-based reranking
+│   │   ├── gap_finder.py         # Onkosul tespiti
+│   │   ├── teacher_synthesizer.py # Ogretmen aciklamalari
+│   │   └── output_models.py      # Structured outputs
+│   ├── vector_store/             # Azure AI Search
+│   │   ├── hybrid_retriever.py   # Hibrit arama
+│   │   └── indexing_pipeline.py  # Indexleme
+│   ├── document_processing/      # PDF isleme
+│   │   ├── layout_analyzer.py    # Layout analizi
+│   │   ├── semantic_chunker.py   # Akilli parcalama
+│   │   └── image_extractor.py    # Gorsel cikarma
+│   ├── database/                 # SQLAlchemy modelleri
+│   ├── cache/                    # Redis/Memory cache
+│   ├── vision/                   # GPT-4o Vision
+│   ├── exam/                     # Sinav olusturma
+│   └── utils/                    # Yardimci araclar
+│
+├── frontend-new/                 # React SPA
+│   ├── src/
+│   │   ├── pages/                # Sayfa bileşenleri
+│   │   │   ├── Chat.tsx          # AI sohbet arayuzu
+│   │   │   ├── Dashboard.tsx     # Ogrenci paneli
+│   │   │   ├── Kazanimlar.tsx    # Ilerleme takibi
+│   │   │   ├── teacher/          # Ogretmen sayfalari
+│   │   │   └── admin/            # Admin sayfalari
+│   │   ├── components/           # Yeniden kullanilabilir
+│   │   ├── context/              # React Context
+│   │   ├── hooks/                # Custom hooks
+│   │   └── utils/                # Yardimci fonksiyonlar
+│   └── package.json
+│
+├── config/                       # Yapilandirma
+│   ├── settings.py               # Pydantic settings
+│   └── azure_config.py           # Azure client factory
+│
+├── scripts/                      # Yardimci scriptler
+│   ├── process_pdfs.py           # PDF yukleme
+│   ├── create_indexes.py         # Index olusturma
+│   └── view_stats.py             # Istatistikler
+│
+├── tests/                        # Test suite
+│   ├── conftest.py               # Pytest fixtures
+│   ├── test_agents.py            # Workflow testleri
+│   └── test_rag_api.py           # API testleri
+│
+├── docker-compose.yml            # Servis orkestrasyon
+├── Dockerfile                    # Backend container
+└── requirements.txt              # Python bagimliliklar
 ```
 
-## Development
+## RAG Pipeline Akisi
 
-### Running Tests
-
-```bash
-# All tests
-pytest tests/
-
-# Specific test file
-pytest tests/test_agents.py -v
-
-# By category
-pytest tests/ -m "unit"
-pytest tests/ -m "integration"
-
-# With coverage
-pytest tests/ --cov=src --cov-report=html
+```
+Ogrenci Sorusu (Metin/Gorsel)
+         │
+         ▼
+┌─────────────────────────────────────────┐
+│  1. ANALYZE_INPUT                       │
+│  - Mesaj tipi siniflandirma             │
+│  - Vision API (gorsel ise)              │
+│  - Akademik/sohbet yonlendirme          │
+└─────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────┐
+│  2. UNDERSTAND_QUERY (SOTA)             │
+│  - LLM tabanli mufredat terminolojisi   │
+│  - Zenginlestirilmis sorgu olusturma    │
+│  - Ders/sinif cikarimi                  │
+└─────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────┐
+│  3. RETRIEVE_KAZANIMLAR                 │
+│  - Hibrit arama (vector + keyword)      │
+│  - Sinif filtreleme (okul/YKS modu)     │
+│  - Sentetik soru eslestirme             │
+└─────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────┐
+│  4. RETRIEVE_TEXTBOOK                   │
+│  - Ders kitabi parcalari                │
+│  - Ilgili gorseller/diyagramlar         │
+│  - Hiyerarsi koruma                     │
+└─────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────┐
+│  5. RERANK_RESULTS                      │
+│  - LLM tabanli ilgililik skorlama       │
+│  - Blended skor hesaplama               │
+│  - Hard cutoff filtreleme (0.25)        │
+└─────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────┐
+│  6. TRACK_PROGRESS                      │
+│  - Yuksek guvenli kazanim takibi (≥0.50)│
+│  - Kullanici ilerlemesi guncelleme      │
+└─────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────┐
+│  7. FIND_PREREQUISITE_GAPS              │
+│  - Onkosul iliskileri analizi           │
+│  - Eksik bilgi tespiti                  │
+└─────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────┐
+│  8. SYNTHESIZE_INTERDISCIPLINARY        │
+│  - Disiplinlerarasi baglantilar         │
+│  - Ogrenme yolu onerisi                 │
+└─────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────┐
+│  9. GENERATE_RESPONSE                   │
+│  - Yapilandirilmis LLM yaniti           │
+│  - Cozum adimlari                       │
+│  - Kaynak alintilari                    │
+└─────────────────────────────────────────┘
+         │
+         ▼
+    FINAL YAPIT
+    (Kazanimlar, Cozum, Kaynaklar)
 ```
 
-### Utility Scripts
+## Azure AI Search Indexleri
 
-```bash
-# Ingest PDF textbooks
-python scripts/process_pdfs.py
+| Index | Amac | Alanlar |
+|-------|------|---------|
+| `meb-kazanimlar-index` | Ogrenme hedefleri | code, description, grade, subject |
+| `meb-kitaplar-index` | Ders kitabi parcalari | content, hierarchy_path, grade |
+| `meb-images-index` | Cikarilmis gorseller | caption, page_number, grade |
+| `meb-sentetik-sorular-index` | Uretilmis sorular | question_text, kazanim_code |
 
-# Create/recreate Azure Search indexes
-python scripts/create_indexes.py
+## API Endpoint'leri
 
-# View system statistics
-python scripts/view_stats.py
+### Analiz
+| Method | Path | Amac |
+|--------|------|------|
+| POST | `/analyze/image` | Gorsel soru analizi |
+| POST | `/analyze/text` | Metin soru analizi |
+| POST | `/analyze/image-stream` | Streaming gorsel analiz |
+| POST | `/analyze/text-stream` | Streaming metin analiz |
+| POST | `/chat` | Birlesik sohbet arayuzu |
 
-# Browse synthetic questions
-python scripts/view_questions.py
-```
+### Ilerleme Takibi
+| Method | Path | Amac |
+|--------|------|------|
+| GET | `/users/me/progress` | Takip edilen kazanimlar |
+| POST | `/users/me/progress/track` | Yeni kazanim takibi |
+| PUT | `/users/me/progress/{code}/understood` | Anlasildi isareti |
+| GET | `/users/me/progress/stats` | Ilerleme istatistikleri |
 
-### Frontend Development
+### Sohbet Gecmisi
+| Method | Path | Amac |
+|--------|------|------|
+| GET | `/conversations` | Sohbet listesi |
+| POST | `/conversations` | Yeni sohbet |
+| GET | `/conversations/{id}` | Sohbet detayi |
+| DELETE | `/conversations/{id}` | Sohbet silme |
 
-```bash
-cd frontend-new
-npm install
-npm run dev      # Development server at localhost:5173
-npm run build    # Production build
-```
+### Sinav Olusturma
+| Method | Path | Amac |
+|--------|------|------|
+| POST | `/exams/generate` | Sinav PDF olustur |
+| GET | `/exams` | Sinav listesi |
+| GET | `/exams/{id}/download` | Sinav indir |
 
-## Configuration
+### Kimlik Dogrulama
+| Method | Path | Amac |
+|--------|------|------|
+| POST | `/auth/register/complete` | Kayit tamamla |
+| GET | `/auth/me` | Kullanici bilgisi |
+| PUT | `/users/me` | Profil guncelle |
 
-### Environment Variables
+## Environment Degiskenleri
 
-```ini
+```env
 # Azure Document Intelligence
 DOCUMENTINTELLIGENCE_ENDPOINT=https://...
 DOCUMENTINTELLIGENCE_API_KEY=...
@@ -233,53 +297,180 @@ DOCUMENTINTELLIGENCE_API_KEY=...
 # Azure AI Search
 AZURE_SEARCH_ENDPOINT=https://...
 AZURE_SEARCH_API_KEY=...
-AZURE_SEARCH_INDEX_KAZANIM=meb-kazanimlar-index
-AZURE_SEARCH_INDEX_KITAP=meb-kitaplar-index
-AZURE_SEARCH_INDEX_IMAGES=meb-images-index
-AZURE_SEARCH_INDEX_QUESTIONS=meb-sentetik-sorular-index
 
 # Azure OpenAI
 AZURE_OPENAI_ENDPOINT=https://...
 AZURE_OPENAI_API_KEY=...
-AZURE_OPENAI_API_VERSION=2024-12-01-preview
-AZURE_OPENAI_CHAT_DEPLOYMENT=gpt-4o
-AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-large-957047
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-large
 
 # Database
-DATABASE_URL=postgresql://user:pass@postgres:5432/mebrag
+DATABASE_URL=postgresql://user:pass@postgres:5432/meb_rag
 
-# Authentication
-JWT_SECRET_KEY=your-secret-key
+# Redis
+REDIS_URL=redis://redis:6379
+REDIS_ENABLED=true
+
+# Firebase
+FIREBASE_CREDENTIALS_PATH=firebase-service-account.json
 
 # Application
 DEBUG=false
 LOG_LEVEL=INFO
 ```
 
-### Key Settings (config/settings.py)
+## Gelistirme
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `rag_confidence_threshold` | 0.50 | Minimum score for kazanım matches |
-| `rag_kazanim_top_k` | 5 | Max kazanımlar to return |
-| `rag_textbook_top_k` | 5 | Max textbook chunks to return |
-| `retrieval_max_retries` | 3 | Retries with filter relaxation |
-| `timeout_generate_response` | 60.0s | Response generation timeout |
+### Lokal Gelistirme (Docker olmadan)
 
-## Documentation
+```bash
+# Backend
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+uvicorn api.main:app --reload --port 8001
 
-Detailed implementation documentation is available in the `docs/` directory:
+# Frontend
+cd frontend-new
+npm install
+npm run dev
+```
 
-- `IMPLEMENTATION_GUIDE.md` - 8-phase implementation checklist
-- `phases/faz1_proje_altyapisi.md` - Project infrastructure
-- `phases/faz2_pdf_isleme.md` - PDF processing
-- `phases/faz3_veritabani.md` - Database setup
-- `phases/faz4_azure_search.md` - Vector store & hybrid search
-- `phases/faz5_azure_vision.md` - Vision API integration
-- `phases/faz6_agentic_sistem.md` - LangGraph agents
-- `phases/faz7_rag_pipeline.md` - Response generation
-- `phases/faz8_api_deployment.md` - API & Docker deployment
+### Test Calistirma
 
-## License
+```bash
+# Tum testler
+pytest tests/
 
-This project is proprietary software. All rights reserved.
+# Belirli test dosyasi
+pytest tests/test_agents.py -v
+
+# Coverage ile
+pytest tests/ --cov=src --cov-report=html
+
+# Sadece unit testler
+pytest tests/ -m "unit"
+```
+
+### Script Kullanimi
+
+```bash
+# PDF yukleme
+python scripts/process_pdfs.py
+
+# Index olusturma
+python scripts/create_indexes.py
+
+# Istatistik goruntuleme
+python scripts/view_stats.py
+```
+
+## Kritik Kaliplar
+
+### 1. Sinif Filtreleme (Her Zaman Gerekli)
+
+```python
+from src.agents.state import get_effective_grade
+
+grade = get_effective_grade(state)  # user_grade oncelikli
+
+if state.get("is_exam_mode"):
+    filter = f"grade le {grade}"    # YKS: kumulatif
+else:
+    filter = f"grade eq {grade}"    # Okul: tam eslesme
+```
+
+### 2. Node State Guncellemeleri
+
+```python
+# DOGRU - sadece degisen alanlar
+async def my_node(state: QuestionAnalysisState) -> Dict[str, Any]:
+    return {"matched_kazanimlar": results, "status": "processing"}
+
+# YANLIS - tum state donme
+# return {**state, "matched_kazanimlar": results}
+```
+
+### 3. Node Decorator'lari
+
+```python
+@with_timeout(30.0)
+@log_node_execution("node_name")
+async def my_node(state: QuestionAnalysisState) -> Dict[str, Any]:
+    try:
+        return {"result": data, "status": "success"}
+    except Exception as e:
+        return {"error": str(e), "status": "failed"}  # Raise yapma!
+```
+
+### 4. Circuit Breaker
+
+```python
+from src.utils.resilience import with_resilience
+
+@with_resilience(circuit_name="azure_search")
+async def search_with_resilience():
+    return await azure_search_client.search(...)
+```
+
+## Veritabani Modelleri
+
+### Ana Tablolar
+
+| Tablo | Amac |
+|-------|------|
+| `users` | Kullanici profilleri |
+| `user_kazanim_progress` | Kazanim takibi |
+| `conversations` | Sohbet oturumlari |
+| `messages` | Sohbet mesajlari |
+| `schools` | Okul kiracilari (SaaS) |
+| `classrooms` | Sinif yonetimi |
+| `assignments` | Odev yonetimi |
+| `assignment_submissions` | Odev teslimleri |
+
+### Iliskiler
+
+```
+User (1) ─────< (N) UserKazanimProgress
+User (1) ─────< (N) Conversation
+Conversation (1) ─────< (N) Message
+School (1) ─────< (N) User
+Classroom (1) ─────< (N) ClassroomEnrollment
+Assignment (1) ─────< (N) AssignmentSubmission
+Kazanim (N) >─────< (N) Kazanim (prerequisites)
+```
+
+## Performans Optimizasyonlari
+
+### Cache Stratejisi
+- **Embedding Cache**: 24 saat TTL, %90 hit rate
+- **Response Cache**: Conversation bazli
+- **Database Query Cache**: 5-60 dakika
+
+### Paralel Islem
+```python
+# Hibrit arama paralel calisir
+kazanim_search(), question_search() -> gather() (25s timeout)
+```
+
+### Token Yonetimi
+- Max context: 128,000 token
+- Reserved output: 4,096 token
+- Warning threshold: %80
+
+## Maliyet Optimizasyonu
+
+1. **Embedding Batch**: 16'li gruplar, 0.5s aralik
+2. **Model Secimi**: gpt-4o-mini sentetik sorular icin
+3. **Cache**: Embedding'ler 24 saat cache
+4. **Secici Islem**: Vision API sadece gorsel sorular icin
+5. **Token Verimliligi**: Max 10 kazanim, max 5 kitap parcasi
+
+## Lisans
+
+Bu proje ozel lisans altindadir. Yediiklim Okullari'na aittir.
+
+## Iletisim
+
+- **Proje**: Yediiklim Okullari AI Egitim Asistani
+- **Gelistirici**: Meba Development Team
